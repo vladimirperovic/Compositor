@@ -170,6 +170,7 @@ body:not(.editing) .sheet { display: none; }
 .viewer canvas { display: block; max-width: 100%; height: auto; }
 .viewer.actual { margin: 0; }
 .viewer.actual canvas { max-width: none; }
+.viewer canvas.panning { cursor: grabbing; }
 
 .busy {
   position: absolute;

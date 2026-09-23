@@ -366,6 +366,7 @@ function displayWidth(width, height) {
 function paint() {
   if (!state.shown) return;
   const { data, width, height, region } = state.shown;
+
   if (region) {
     // A piece of the whole image: the canvas keeps the image's own size, showing the untouched picture
     // where nothing has been processed yet, and the piece is drawn into place on top of it.
@@ -376,19 +377,22 @@ function paint() {
       context.putImageData(new ImageData(whole.data, whole.width, whole.height), 0, 0);
     }
     canvas.style.width = `${displayWidth(whole.width, whole.height)}px`;
-    if (state.holding) {
-      const row = whole.width * 4;
-      const untouched = new Uint8ClampedArray(width * height * 4);
-      for (let line = 0; line < height; line += 1) {
-        const from = (region.y + line) * row + region.x * 4;
-        untouched.set(whole.data.subarray(from, from + width * 4), line * width * 4);
-      }
+    const untouched = state.holding || state.split ? cutOut(whole, region, width, height) : null;
+    if (state.holding && untouched) {
       context.putImageData(new ImageData(untouched, width, height), region.x, region.y);
-    } else {
-      context.putImageData(new ImageData(data, width, height), region.x, region.y);
+      return;
     }
+    context.putImageData(new ImageData(data, width, height), region.x, region.y);
+    if (!state.split || !untouched) return;
+    const cut = Math.round(whole.width * state.splitAt);
+    const before = Math.min(width, Math.max(0, cut - region.x));
+    if (before > 0) {
+      context.putImageData(new ImageData(untouched, width, height), region.x, region.y, 0, 0, before, height);
+    }
+    if (cut > region.x && cut < region.x + width) drawDivider(cut, region.y, height);
     return;
   }
+
   canvas.width = width;
   canvas.height = height;
   canvas.style.width = `${displayWidth(width, height)}px`;
@@ -397,11 +401,34 @@ function paint() {
   if (state.holding || !state.split || !untouched) return;
   const cut = Math.round(width * state.splitAt);
   if (cut > 0) context.putImageData(new ImageData(untouched, width, height), 0, 0, 0, 0, cut, height);
-  context.fillStyle = 'rgba(245, 241, 234, .9)';
-  context.fillRect(cut - 1, 0, 2, height);
+  drawDivider(cut, 0, height);
+}
+
+/// The same rows of the image as it came in, for the piece on screen.
+function cutOut(whole, region, width, height) {
+  const row = whole.width * 4;
+  const piece = new Uint8ClampedArray(width * height * 4);
+  for (let line = 0; line < height; line += 1) {
+    const from = (region.y + line) * row + region.x * 4;
+    piece.set(whole.data.subarray(from, from + width * 4), line * width * 4);
+  }
+  return piece;
+}
+
+/// The line between before and after, drawn in the size it will appear on screen rather than in image
+/// pixels — on a large image scaled down to fit, a two-pixel line all but disappears.
+function drawDivider(cut, top, height) {
+  const shown = parseFloat(canvas.style.width) || canvas.width;
+  const ratio = Math.max(1, canvas.width / shown);
+  context.save();
+  context.fillStyle = 'rgba(14, 14, 16, .35)';
+  context.fillRect(cut - 2.5 * ratio, top, 5 * ratio, height);
+  context.fillStyle = 'rgba(245, 241, 234, .95)';
+  context.fillRect(cut - ratio, top, 2 * ratio, height);
   context.beginPath();
-  context.arc(cut, height / 2, Math.max(9, width / 130), 0, Math.PI * 2);
+  context.arc(cut, top + height / 2, 9 * ratio, 0, Math.PI * 2);
   context.fill();
+  context.restore();
 }
 
 /// The image as it came in, at the size currently on screen, or nothing when the two do not match.
@@ -751,24 +778,41 @@ function wire() {
     const box = canvas.getBoundingClientRect();
     return Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
   };
+  let panning = null;
   canvas.addEventListener('pointerdown', event => {
     const box = canvas.getBoundingClientRect();
     if (state.split && Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < 16) {
       dragging = true;
       canvas.setPointerCapture(event.pointerId);
+    } else if (state.zoom === 'actual') {
+      const stage = el('stage');
+      panning = { x: event.clientX, y: event.clientY, left: stage.scrollLeft, top: stage.scrollTop };
+      canvas.setPointerCapture(event.pointerId);
+      canvas.classList.add('panning');
     } else {
       hold(true);
     }
     event.preventDefault();
   });
   canvas.addEventListener('pointermove', event => {
+    if (panning) {
+      const stage = el('stage');
+      stage.scrollLeft = panning.left - (event.clientX - panning.x);
+      stage.scrollTop = panning.top - (event.clientY - panning.y);
+      return;
+    }
     if (dragging) { state.splitAt = position(event); paint(); return; }
-    if (!state.split) return;
     const box = canvas.getBoundingClientRect();
-    canvas.style.cursor = Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < 16 ? 'ew-resize' : 'default';
+    const onDivider = state.split && Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < 16;
+    canvas.style.cursor = onDivider ? 'ew-resize' : state.zoom === 'actual' ? 'grab' : 'default';
   });
   for (const event of ['pointerup', 'pointercancel', 'pointerleave']) {
-    canvas.addEventListener(event, () => { dragging = false; hold(false); });
+    canvas.addEventListener(event, () => {
+      dragging = false;
+      panning = null;
+      canvas.classList.remove('panning');
+      hold(false);
+    });
   }
 
   el('zoom').addEventListener('click', () => {
