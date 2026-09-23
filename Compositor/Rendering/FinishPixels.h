@@ -9,7 +9,11 @@
 // graduated filter (shadows = warmth, midtones = softness, highlights = the line, contrast_type = the edge it
 // comes from), film response (shadows = lifted blacks, midtones = S-curve, highlights = shoulder) and the
 // cinematic look, one filter that runs the whole finishing chain (shadows = warm/cool split, midtones = glow,
-// highlights = grain, radius = glow radius). amount and tone weights: 0...1; saturation and warmth: -1...1;
+// highlights = grain, radius = glow radius), three-way color (a temperature and a tint per range, the way a
+// colorist's three wheels work) and highlight compensation (highlights = how hard the top end bends down,
+// shadows = how much shape blown areas borrow from what surrounds them, midtones = how much of the colour
+// a clipped channel left behind is taken out, radius = how far around a blown area to look).
+// amount and tone weights: 0...1; saturation and warmth: -1...1;
 // radius: pixels (grain size, texture scale, halation radius, fringe width at the corners, softness radius).
 // seed: the grain pattern.
 typedef struct {
@@ -21,6 +25,8 @@ typedef struct {
     // Processed pixels per layer pixel. Only the cinematic look reads it, to keep the radii it sets itself
     // (grain, fringe, softness) the size they would be in the full render. 0 means 1.
     float scale;
+    // Three-Way Color's second axis: green below zero, magenta above, one per tonal range.
+    float tint_shadows, tint_midtones, tint_highlights;
 } FinishEffectSettings;
 
 // Several effects in order, sharing one set of working planes. The pixels are a crop starting at

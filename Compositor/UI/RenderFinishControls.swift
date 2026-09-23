@@ -60,6 +60,28 @@ struct RenderFinishControls: View {
                     slider("Lifted blacks", \.shadows, range: 0...100)
                     slider("Saturation", \.saturation, range: -100...100)
                 }
+                if selected == .threeWayColor {
+                    Text("HIGHLIGHTS").font(.system(size: 10, weight: .semibold)).tracking(1.5)
+                        .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    slider("Temperature", \.highlights, range: -100...100)
+                    slider("Tint", \.tintHighlights, range: -100...100)
+                    Text("MIDTONES").font(.system(size: 10, weight: .semibold)).tracking(1.5)
+                        .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    slider("Temperature", \.midtones, range: -100...100)
+                    slider("Tint", \.tintMidtones, range: -100...100)
+                    Text("SHADOWS").font(.system(size: 10, weight: .semibold)).tracking(1.5)
+                        .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    slider("Temperature", \.shadows, range: -100...100)
+                    slider("Tint", \.tintShadows, range: -100...100)
+                    Text("Temperature: cool below zero, warm above. Tint: green below zero, magenta above.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if selected == .highlightCompensation {
+                    slider("Compress the top end", \.highlights, range: 0...100)
+                    slider("Borrow shape", \.shadows, range: 0...100)
+                    slider("Take the cast out", \.midtones, range: 0...100)
+                }
                 if selected == .cinematicLook {
                     slider("Warm / cool split", \.shadows, range: 0...100)
                     slider("Glow", \.midtones, range: 0...100)
@@ -128,6 +150,8 @@ struct RenderFinishFilterList: View {
         case .graduatedFilter: "circle.bottomhalf.filled"
         case .filmResponse: "film"
         case .cinematicLook: "wand.and.stars"
+        case .threeWayColor: "circle.grid.3x3"
+        case .highlightCompensation: "sun.min"
         }
     }
     var body: some View {

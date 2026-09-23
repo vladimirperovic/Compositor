@@ -5,7 +5,7 @@ import AppKit
 nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
     case tonalContrast, ink, proContrast, detailExtractor, bloom, warmth, vignette
     case sensorGrain, microTexture, highlightRolloff, chromaticAberration, lensSoftness
-    case splitTone, graduatedFilter, filmResponse, cinematicLook
+    case splitTone, graduatedFilter, filmResponse, cinematicLook, threeWayColor, highlightCompensation
     var id: Int { rawValue }
     /// Camera and lens character that makes a render read as a photograph.
     var isPhotoRealism: Bool {
@@ -31,6 +31,8 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .graduatedFilter: "Graduated Filter"
         case .filmResponse: "Film Response"
         case .cinematicLook: "Cinematic Look"
+        case .threeWayColor: "Three-Way Color"
+        case .highlightCompensation: "Highlight Compensation"
         }
     }
     var summary: String {
@@ -54,6 +56,14 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
             The whole finishing chain as one filter: film response, warm and cool split, fine texture, \
             diffusion and halation, lens character, vignette and grain.
             """
+        case .threeWayColor: """
+            A colorist's three wheels: shadows, midtones and highlights each take their own temperature \
+            and their own green-to-magenta tint.
+            """
+        case .highlightCompensation: """
+            Bring blown windows and lamps back: bend the top end down, let them borrow the shape of what \
+            surrounds them, and take out the colour a clipped channel left behind.
+            """
         }
     }
     /// A stable name for saved presets, independent of the order of the cases.
@@ -75,6 +85,8 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .graduatedFilter: "graduatedFilter"
         case .filmResponse: "filmResponse"
         case .cinematicLook: "cinematicLook"
+        case .threeWayColor: "threeWayColor"
+        case .highlightCompensation: "highlightCompensation"
         }
     }
     var usesRadius: Bool { radiusControl != nil }
@@ -88,7 +100,8 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .chromaticAberration: ("Fringe at the corners", 1...12)
         case .lensSoftness: ("Softness radius", 1...40)
         case .cinematicLook: ("Glow radius", 4...100)
-        case .ink, .proContrast, .warmth, .vignette, .splitTone, .graduatedFilter, .filmResponse: nil
+        case .highlightCompensation: ("How far to borrow from", 4...100)
+        case .ink, .proContrast, .warmth, .vignette, .splitTone, .graduatedFilter, .filmResponse, .threeWayColor: nil
         }
     }
     var defaults: FinishParameters {
@@ -111,6 +124,10 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .filmResponse: value.amount = 60; value.shadows = 25; value.midtones = 25; value.highlights = 50
         case .cinematicLook: value.amount = 55; value.shadows = 60; value.midtones = 50
             value.highlights = 35; value.radius = 28
+        case .threeWayColor: value.amount = 60; value.shadows = -30; value.midtones = 0; value.highlights = 35
+            value.tintShadows = 0; value.tintMidtones = 0; value.tintHighlights = 0
+        case .highlightCompensation: value.amount = 70; value.highlights = 55; value.shadows = 45
+            value.midtones = 50; value.radius = 24
         }
         return value
     }
@@ -167,6 +184,10 @@ nonisolated struct FinishParameters: Equatable, Sendable {
     var contrastType: TonalContrastType = .standard
     var protectShadows: Double = 0
     var protectHighlights: Double = 0
+    /// Three-Way Color's second axis, per tonal range: green below zero, magenta above.
+    var tintShadows: Double = 0
+    var tintMidtones: Double = 0
+    var tintHighlights: Double = 0
 
     var gradientEdge: GradientEdge {
         get { GradientEdge(rawValue: contrastType.rawValue) ?? .top }
@@ -180,7 +201,7 @@ nonisolated struct FinishParameters: Equatable, Sendable {
         }
         var result = self
         result.amount = finite(amount, 0...100, fallback.amount)
-        let signedShadows: Set<FinishEffect> = [.warmth, .tonalContrast, .splitTone, .graduatedFilter]
+        let signedShadows: Set<FinishEffect> = [.warmth, .tonalContrast, .splitTone, .graduatedFilter, .threeWayColor]
         result.shadows = finite(shadows, signedShadows.contains(effect) ? -100...100 : 0...100, fallback.shadows)
         result.midtones = finite(midtones, -100...100, fallback.midtones)
         result.highlights = finite(highlights, -100...100, fallback.highlights)
@@ -189,6 +210,9 @@ nonisolated struct FinishParameters: Equatable, Sendable {
         result.protectShadows = finite(protectShadows, 0...100, 0)
         result.protectHighlights = finite(protectHighlights, 0...100, 0)
         result.palette = min(5, max(0, palette))
+        result.tintShadows = finite(tintShadows, -100...100, 0)
+        result.tintMidtones = finite(tintMidtones, -100...100, 0)
+        result.tintHighlights = finite(tintHighlights, -100...100, 0)
         return result
     }
 
@@ -198,7 +222,9 @@ nonisolated struct FinishParameters: Equatable, Sendable {
                              midtones: Float(midtones / 100), highlights: Float(highlights / 100),
                              radius: Float(radius * scale), saturation: Float(saturation / 100), palette: Int32(palette),
                              contrast_type: Int32(contrastType.rawValue), protect_shadows: Float(protectShadows / 100),
-                             protect_highlights: Float(protectHighlights / 100), seed: seed, scale: Float(scale))
+                             protect_highlights: Float(protectHighlights / 100), seed: seed, scale: Float(scale),
+                             tint_shadows: Float(tintShadows / 100), tint_midtones: Float(tintMidtones / 100),
+                             tint_highlights: Float(tintHighlights / 100))
     }
 
     /// Whether these settings leave every pixel of `effect` unchanged, so it can be skipped.
@@ -211,6 +237,10 @@ nonisolated struct FinishParameters: Equatable, Sendable {
         case .warmth: return shadows == 0 && saturation == 0
         case .splitTone: return shadows == 0 && midtones == 0 && highlights == 0 && saturation == 0
         case .filmResponse: return shadows == 0 && midtones == 0 && highlights == 0 && saturation == 0
+        case .threeWayColor:
+            return shadows == 0 && midtones == 0 && highlights == 0 && saturation == 0
+                && tintShadows == 0 && tintMidtones == 0 && tintHighlights == 0
+        case .highlightCompensation: return shadows == 0 && midtones == 0 && highlights == 0
         default: return false
         }
     }
@@ -220,7 +250,7 @@ nonisolated struct FinishParameters: Equatable, Sendable {
 nonisolated extension FinishParameters: Codable {
     private enum CodingKeys: String, CodingKey {
         case enabled, amount, shadows, midtones, highlights, radius, saturation, palette, contrastType
-        case protectShadows, protectHighlights
+        case protectShadows, protectHighlights, tintShadows, tintMidtones, tintHighlights
     }
     init(from decoder: any Decoder) throws {
         self.init()
@@ -237,6 +267,9 @@ nonisolated extension FinishParameters: Codable {
             .flatMap(TonalContrastType.init(rawValue:)) ?? contrastType
         protectShadows = try values.decodeIfPresent(Double.self, forKey: .protectShadows) ?? protectShadows
         protectHighlights = try values.decodeIfPresent(Double.self, forKey: .protectHighlights) ?? protectHighlights
+        tintShadows = try values.decodeIfPresent(Double.self, forKey: .tintShadows) ?? tintShadows
+        tintMidtones = try values.decodeIfPresent(Double.self, forKey: .tintMidtones) ?? tintMidtones
+        tintHighlights = try values.decodeIfPresent(Double.self, forKey: .tintHighlights) ?? tintHighlights
     }
     func encode(to encoder: any Encoder) throws {
         var values = encoder.container(keyedBy: CodingKeys.self)
@@ -251,6 +284,9 @@ nonisolated extension FinishParameters: Codable {
         try values.encode(contrastType.rawValue, forKey: .contrastType)
         try values.encode(protectShadows, forKey: .protectShadows)
         try values.encode(protectHighlights, forKey: .protectHighlights)
+        try values.encode(tintShadows, forKey: .tintShadows)
+        try values.encode(tintMidtones, forKey: .tintMidtones)
+        try values.encode(tintHighlights, forKey: .tintHighlights)
     }
 }
 
@@ -267,8 +303,9 @@ nonisolated struct RenderFinishSettings: Equatable, Sendable {
     static let palettes = ["Carbon", "Sepia", "Cyanotype", "Warm Violet", "Teal", "Copper"]
     // Tone/detail first, then color, glow, lens and final framing; grain sits on top of everything, as a sensor's
     // would. UI order emphasizes the two main filters.
-    static let processingOrder: [FinishEffect] = [.tonalContrast, .detailExtractor, .microTexture, .proContrast, .filmResponse,
-                                                  .ink, .warmth, .splitTone, .graduatedFilter,
+    static let processingOrder: [FinishEffect] = [.highlightCompensation,
+                                                  .tonalContrast, .detailExtractor, .microTexture, .proContrast, .filmResponse,
+                                                  .ink, .warmth, .splitTone, .threeWayColor, .graduatedFilter,
                                                   .highlightRolloff, .bloom, .lensSoftness, .chromaticAberration, .vignette,
                                                   .sensorGrain, .cinematicLook]
     subscript(_ effect: FinishEffect) -> FinishParameters {

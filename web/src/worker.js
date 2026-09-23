@@ -5,6 +5,9 @@
 let wasm = null;
 const threads = false;
 
+// Floats per effect, matching DK_SLOTS in darkroom.c.
+const SLOTS = 16;
+
 const ready = (async () => {
   importScripts('darkroom.js?v=%%V%%');
   wasm = await self.createDarkroom({ locateFile: file => `${file}?v=%%V%%` });
@@ -22,10 +25,10 @@ self.onmessage = async event => {
     const room = values.length * 9;
     const expanded = wasm._malloc(room * 4);
     wasm.HEAPF32.set(values, stack / 4);
-    const made = wasm._dk_expand(stack, values.length / 13, expanded, room / 13);
-    const steps = new Float32Array(wasm.HEAPF32.subarray(expanded / 4, expanded / 4 + made * 13));
+    const made = wasm._dk_expand(stack, values.length / SLOTS, expanded, room / SLOTS);
+    const steps = new Float32Array(wasm.HEAPF32.subarray(expanded / 4, expanded / 4 + made * SLOTS));
     const reaches = [];
-    for (let i = 0; i < made; i += 1) reaches.push(wasm._dk_reach(expanded + i * 13 * 4, 1));
+    for (let i = 0; i < made; i += 1) reaches.push(wasm._dk_reach(expanded + i * SLOTS * 4, 1));
     wasm._free(stack);
     wasm._free(expanded);
     self.postMessage({ id, ok: true, steps, reaches });
@@ -35,7 +38,7 @@ self.onmessage = async event => {
   if (op === 'reach') {
     const stack = wasm._malloc(Math.max(4, values.length * 4));
     wasm.HEAPF32.set(values, stack / 4);
-    const reach = wasm._dk_reach(stack, values.length / 13);
+    const reach = wasm._dk_reach(stack, values.length / SLOTS);
     wasm._free(stack);
     self.postMessage({ id, ok: true, reach });
     return;
@@ -49,7 +52,7 @@ self.onmessage = async event => {
     wasm.HEAPU8.set(new Uint8Array(buffer), image);
     if (!opaque) wasm._dk_premultiply(image, pixels);
     wasm.HEAPF32.set(values, stack / 4);
-    const count = values.length / 13;
+    const count = values.length / SLOTS;
     if (!wasm._dk_apply(image, width, height, fullWidth, fullHeight, offsetX, offsetY, stack, count)) {
       throw new Error('The filters could not run on this image.');
     }

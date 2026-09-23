@@ -57,6 +57,21 @@ On an 8000 × 5333 opaque render on an 8-core Apple silicon Mac, Tonal Contrast,
 
 Source reference for Nik controls: [DxO Color Efex guide](https://userguides.dxo.com/nikcollection/en/color-efex/). Archviz context: [Chaos lens effects guide](https://www.chaos.com/blog/the-light-touch-your-complete-guide-to-v-ray-lens-effects) and [Chaos color corrections](https://docs.chaos.com/display/ARENA/Color%2BCorrections%2BTab). The five additional effects are a practical selection for renders, not a measured popularity ranking.
 
+## Three-Way Color and Highlight Compensation
+
+Two filters come from what colorists and renderers already do. **Three-Way Color** is the three wheels of a
+colour corrector — Magic Bullet's Colorista, Resolve's lift/gamma/gain — where each tonal range takes its
+own direction. Split Tone has one axis, temperature; this one adds the second, green to magenta, on each of
+the three ranges, over the same weights Tonal Contrast uses so the ranges meet without a seam.
+
+**Highlight Compensation** is Corona's highlight compression, done after the render instead of before it. In
+the renderer it works on high dynamic range data; on a saved 8-bit image the information above white is
+gone, so the filter does the three things that are still possible: it bends the top end down by the same
+ratio on every channel (hue holds, which is what Corona's *filmic highlights* preserves), it lets a blown
+area borrow the shape of the unblown ring around it — the working planes are averaged with blown pixels
+weighted out, so a window falls off into the wall instead of sitting flat — and it takes out the colour a
+clipped channel left behind, the magenta or cyan cast of a channel that hit 255 before the others.
+
 ## The browser version
 
 The same core runs on the web, because it is plain C with exactly one platform dependency: the

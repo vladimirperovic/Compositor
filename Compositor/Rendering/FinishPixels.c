@@ -63,7 +63,11 @@ static void blur(float *values, float *scratch, int w, int h, int r) {
 
 // Unpremultiplied luminance, weighted by alpha (and for glows, by brightness above a threshold) for the
 // neighbourhood blur.
-typedef struct { const uint8_t *rgba; size_t stride; int w; float bright_from, bright_to; float *base, *coverage; } Fill;
+typedef struct {
+    const uint8_t *rgba; size_t stride; int w; float bright_from, bright_to; float *base, *coverage;
+    // Highlight Compensation averages what is *not* blown, so a pixel's weight fades out between these.
+    float keep_from, keep_to;
+} Fill;
 
 static void fill_row(void *context, size_t y) {
     const Fill *f = context;
@@ -73,8 +77,9 @@ static void fill_row(void *context, size_t y) {
         size_t i = y * (size_t)f->w + (size_t)x;
         float a = p[3] / 255.f;
         float l = p[3] ? (.2126f * p[0] + .7152f * p[1] + .0722f * p[2]) / p[3] : 0;
-        f->base[i] = (f->bright_to > 0 ? l * smooth(f->bright_from, f->bright_to, l) : l) * a;
-        if (f->coverage) f->coverage[i] = a;
+        float keep = f->keep_to > 0 ? 1 - smooth(f->keep_from, f->keep_to, l) : 1;
+        f->base[i] = (f->bright_to > 0 ? l * smooth(f->bright_from, f->bright_to, l) : l) * a * keep;
+        if (f->coverage) f->coverage[i] = a * keep;
     }
 }
 
@@ -126,6 +131,7 @@ typedef struct {
     // Blurred luminance; divided by blurred coverage unless the image is opaque (coverage NULL).
     const float *base, *coverage;
     float amount, shadows, midtones, highlights, saturation, protect_shadows, protect_highlights;
+    float tint_shadows, tint_midtones, tint_highlights;
     float full_w, full_h, offset_x, offset_y;
     // Sensor Grain: its cell in processed pixels, and how much of it survives a preview smaller than the grain.
     float grain_cell, grain_gain;
@@ -230,6 +236,43 @@ static void finish_row(void *context, size_t y) {
                 target = knee + (1 - knee) * (u - shoulder * .35f * u * u);
             }
             for (int c = 0; c < 3; ++c) out[c] += target - l;
+        } else if (f->kind == 16) {
+            // Three-Way Color: a colorist's wheels — every tonal range gets its own temperature and its
+            // own green-to-magenta tint, on the ranges Tonal Contrast already uses.
+            float sw = 1 - smooth(.15f, .5f, l), hw = smooth(.5f, .85f, l), mw = 1 - sw - hw;
+            float warm = f->shadows * sw + f->midtones * mw + f->highlights * hw;
+            float tint = f->tint_shadows * sw + f->tint_midtones * mw + f->tint_highlights * hw;
+            out[0] += warm * .15f * (1 - rgb[0]) + tint * .07f * (1 - rgb[0]);
+            out[1] += warm * .025f * (1 - rgb[1]) - tint * .12f * rgb[1];
+            out[2] += -warm * .15f * rgb[2] + tint * .07f * (1 - rgb[2]);
+        } else if (f->kind == 17) {
+            // Highlight Compensation: what a renderer does before the image is saved, done afterwards.
+            // The top end bends down by the same ratio on every channel, so hue holds; a blown area
+            // borrows its shape from the unblown ring around it; and the colour a clipped channel left
+            // behind is taken back out.
+            const float knee = .72f;
+            float m = fmaxf(rgb[0], fmaxf(rgb[1], rgb[2]));
+            float blown = smooth(.80f, 1.f, m);
+            float compress = clamp01(f->highlights), scale = 1;
+            if (compress > 0 && m > knee) {
+                float over = m - knee;
+                scale = (knee + over / (1 + compress * 6 * over / (1 - knee))) / m;
+            }
+            for (int c = 0; c < 3; ++c) out[c] = rgb[c] * scale;
+            float recover = clamp01(f->shadows);
+            // Only where the ring around it is known: with everything nearby blown there is nothing to
+            // borrow, and pulling toward an average of nothing would punch a hole in the image.
+            float known = coverage ? coverage[i] : 1;
+            if (base && recover > 0 && blown > 0 && known > .08f) {
+                float lit = m * scale;
+                float pull = blown * recover * fmaxf(0, 1 - fminf(1, low * 1.08f) / fmaxf(1e-4f, lit));
+                for (int c = 0; c < 3; ++c) out[c] *= 1 - pull;
+            }
+            float neutral = blown * clamp01(f->midtones);
+            if (neutral > 0) {
+                float bright = .2126f * out[0] + .7152f * out[1] + .0722f * out[2];
+                for (int c = 0; c < 3; ++c) out[c] += (bright - out[c]) * neutral;
+            }
         } else {
             float nx = 2 * ((float)x + f->offset_x + .5f) / f->full_w - 1;
             float ny = 2 * ((float)y + f->offset_y + .5f) / f->full_h - 1;
@@ -331,13 +374,15 @@ static int is_spatial(const FinishEffectSettings *effect) {
     switch (effect->kind) {
         case 0: return effect->shadows != 0 || effect->midtones != 0 || effect->highlights != 0;
         case 9: return effect->highlights > 0; // Highlight rolloff itself is a per-pixel tone curve.
+        case 17: return effect->shadows > 0;   // Only borrowing shape needs to see the neighbourhood.
         case 3: case 4: case 8: return 1;
         default: return 0;
     }
 }
 
 static int valid_effect(const FinishEffectSettings *e) {
-    return e->kind >= 0 && e->kind <= 15 && isfinite(e->amount) && isfinite(e->radius) && isfinite(e->saturation)
+    return e->kind >= 0 && e->kind <= 17 && isfinite(e->amount)
+        && isfinite(e->tint_shadows) && isfinite(e->tint_midtones) && isfinite(e->tint_highlights) && isfinite(e->radius) && isfinite(e->saturation)
         && isfinite(e->protect_shadows) && isfinite(e->protect_highlights) && isfinite(e->scale)
         && isfinite(e->shadows) && isfinite(e->midtones) && isfinite(e->highlights);
 }
@@ -355,16 +400,16 @@ static size_t expand_look(const FinishEffectSettings *look, FinishEffectSettings
     float scale = look->scale > 0 ? fminf(8, look->scale) : 1;
     float radius = fmaxf(1, fminf(500, look->radius));
     const FinishEffectSettings steps[FINISH_LOOK_STEPS] = {
-        {14, amount * .80f, .35f, .30f, 0, 1, 0, 0, 0, 0, 0, 0, scale},                             // film response
-        {12, amount * split, -.55f, 0, .50f, 1, 0, 0, 0, 0, 0, 0, scale},                           // split tone
-        {8, amount * .30f, 0, 0, 0, fmaxf(1, 1.2f * scale), 0, 0, 0, 0, 0, 0, scale},               // micro texture
-        {4, amount * glow * .70f, 0, 0, 0, radius, 0, 0, 0, 0, 0, 0, scale},                        // bloom
+        {14, amount * .80f, .35f, .30f, 0, 1, 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},                             // film response
+        {12, amount * split, -.55f, 0, .50f, 1, 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},                           // split tone
+        {8, amount * .30f, 0, 0, 0, fmaxf(1, 1.2f * scale), 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},               // micro texture
+        {4, amount * glow * .70f, 0, 0, 0, radius, 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},                        // bloom
         {9, amount * (.45f + .55f * glow), 0, 0, .35f + .45f * glow,                                // rolloff + halation
-         fmaxf(1, radius * .75f), 0, 0, 0, 0, 0, 0, scale},
-        {10, amount * .50f, 0, 0, 0, fmaxf(1, 2 * scale), 0, 0, 0, 0, 0, 0, scale},                 // aberration
-        {11, amount * .22f, 0, 0, 0, fmaxf(1, 3 * scale), 0, 0, 0, 0, 0, 0, scale},                 // lens softness
-        {6, amount * .30f, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, scale},                                    // vignette
-        {7, amount * grain, 0, 0, 0, fmaxf(.5f, 1.5f * scale), 0, 0, 0, 0, 0, look->seed, scale}    // sensor grain
+         fmaxf(1, radius * .75f), 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},
+        {10, amount * .50f, 0, 0, 0, fmaxf(1, 2 * scale), 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},                 // aberration
+        {11, amount * .22f, 0, 0, 0, fmaxf(1, 3 * scale), 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},                 // lens softness
+        {6, amount * .30f, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, scale, 0, 0, 0},                                    // vignette
+        {7, amount * grain, 0, 0, 0, fmaxf(.5f, 1.5f * scale), 0, 0, 0, 0, 0, look->seed, scale, 0, 0, 0}    // sensor grain
     };
     size_t count = 0;
     for (size_t i = 0; i < FINISH_LOOK_STEPS; ++i) if (steps[i].amount > 0) out[count++] = steps[i];
@@ -417,6 +462,10 @@ static int apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
         spatial |= (is_spatial(&effects[e]) || effects[e].kind == 11) && active;
         copies |= effects[e].kind == 10 && active;
     }
+    int weighted = 0;
+    for (size_t e = 0; e < count; ++e) {
+        if (effects[e].kind == 17 && clamp01(effects[e].amount) > 0 && effects[e].shadows > 0) weighted = 1;
+    }
     int w = (int)width, h = (int)height;
     // Working planes are shared by every spatial effect in the stack, so they are allocated (and first
     // touched) once. Renders are usually opaque: then blurred coverage is 1 everywhere and needs no plane.
@@ -433,8 +482,8 @@ static int apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
         size_t bytes = width * height * sizeof(float);
         base = malloc(bytes);
         scratch = malloc(bytes);
-        if (!opaque) coverage = malloc(bytes);
-        if (!base || !scratch || (!opaque && !coverage)) { free(base); free(coverage); free(scratch); free(source); return 0; }
+        if (!opaque || weighted) coverage = malloc(bytes);
+        if (!base || !scratch || ((!opaque || weighted) && !coverage)) { free(base); free(coverage); free(scratch); free(source); return 0; }
     }
     for (size_t e = 0; e < count; ++e) {
         FinishEffectSettings effect = effects[e];
@@ -473,7 +522,7 @@ static int apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
         if (uses_base) {
             float radius = kind == 0 ? effect.radius * radii[contrast_type] : effect.radius;
             Fill fill = {rgba, stride, w, kind == 4 ? .55f : .72f, kind == 4 || kind == 9 ? (kind == 4 ? .95f : 1) : 0,
-                         base, coverage};
+                         base, coverage, kind == 17 ? .80f : 0, kind == 17 ? 1 : 0};
             dispatch_apply_f(height, DISPATCH_APPLY_AUTO, &fill, fill_row);
             int r = (int)fmaxf(1, fminf(500, roundf(radius)));
             blur(base, scratch, w, h, r);
@@ -484,6 +533,7 @@ static int apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
             uses_base ? base : NULL, uses_base ? coverage : NULL,
             amount, effect.shadows, effect.midtones, effect.highlights, effect.saturation,
             effect.protect_shadows, effect.protect_highlights,
+            effect.tint_shadows, effect.tint_midtones, effect.tint_highlights,
             (float)full_width, (float)full_height, (float)offset_x, (float)offset_y,
             fmaxf(.05f, effect.radius), fminf(1, fmaxf(.05f, effect.radius)), effect.seed
         };
@@ -528,7 +578,7 @@ int finish_apply_region(uint8_t *rgba, size_t width, size_t height, size_t strid
                         float radius, float saturation, int palette, int contrast_type,
                         float protect_shadows, float protect_highlights) {
     FinishEffectSettings effect = {kind, amount, shadows, midtones, highlights, radius, saturation,
-                                   palette, contrast_type, protect_shadows, protect_highlights, 0, 1};
+                                   palette, contrast_type, protect_shadows, protect_highlights, 0, 1, 0, 0, 0};
     return finish_apply_stack(rgba, width, height, stride, full_width, full_height, offset_x, offset_y, &effect, 1);
 }
 

@@ -96,6 +96,38 @@ final class RenderFinishPresets {
             $0[.vignette] = amount(.vignette, 15)
             $0[.sensorGrain] = amount(.sensorGrain, 18, radius: 1.5)
         },
+        // The interior problem Corona's highlight compression exists for, solved after the render: the
+        // window comes back down, borrows the shape of the wall around it and drops the clipped cast.
+        look("window-light", "Window Light") {
+            $0[.highlightCompensation] = recovery(75, compress: 60, borrow: 50, cast: 55, radius: 26)
+            $0[.tonalContrast] = tonal(35, .balanced, shadows: 20, midtones: 30, highlights: 8, protectHighlights: 30)
+            $0[.warmth] = warmth(45, warmth: 10, saturation: 4)
+        },
+        // Three wheels, the way a colorist would set them: cool shade, warm light, a whisper of green
+        // through the middle so the whites do not go pink.
+        look("colorist", "Colorist") {
+            $0[.filmResponse] = film(50, lift: 18, curve: 20, shoulder: 45, saturation: 0)
+            $0[.threeWayColor] = wheels(65, shadows: -35, midtones: -5, highlights: 40,
+                                        tintShadows: 6, tintMidtones: -8, tintHighlights: 4)
+            $0[.sensorGrain] = amount(.sensorGrain, 22, radius: 1.5)
+        },
+        // Dusk: the light that is left goes warm, everything it does not reach goes blue.
+        look("blue-hour", "Blue Hour") {
+            $0[.threeWayColor] = wheels(70, shadows: -55, midtones: -15, highlights: 45,
+                                        tintShadows: -4, tintMidtones: 0, tintHighlights: 6)
+            $0[.highlightRolloff] = rolloff(45, halation: 35, radius: 26)
+            $0[.bloom] = amount(.bloom, 30, radius: 34)
+            $0[.vignette] = amount(.vignette, 22)
+            $0[.sensorGrain] = amount(.sensorGrain, 28, radius: 1.5)
+        },
+        // Overcast: nothing to recover, everything to lift — contrast where the light is flat, the sky
+        // held down, and no grain to muddy a clean grey day.
+        look("overcast-exterior", "Overcast Exterior") {
+            $0[.tonalContrast] = tonal(45, .standard, shadows: 25, midtones: 40, highlights: 15, protectShadows: 15)
+            $0[.proContrast] = amount(.proContrast, 40)
+            $0[.graduatedFilter] = graduated(30, from: .top, ends: 40, softness: 45, warmth: -12)
+            $0[.warmth] = warmth(40, warmth: 8, saturation: 6)
+        },
         look("carbon-monochrome", "Carbon Monochrome") {
             $0[.tonalContrast] = tonal(40, .standard, shadows: 30, midtones: 45, highlights: 20)
             $0[.ink] = amount(.ink, 100)
@@ -136,6 +168,19 @@ final class RenderFinishPresets {
         var value = Self.amount(.filmResponse, amount)
         value.shadows = lift; value.midtones = curve; value.highlights = shoulder
         value.saturation = saturation
+        return value
+    }
+    private static func wheels(_ amount: Double, shadows: Double, midtones: Double, highlights: Double,
+                               tintShadows: Double, tintMidtones: Double, tintHighlights: Double) -> FinishParameters {
+        var value = Self.amount(.threeWayColor, amount)
+        value.shadows = shadows; value.midtones = midtones; value.highlights = highlights
+        value.tintShadows = tintShadows; value.tintMidtones = tintMidtones; value.tintHighlights = tintHighlights
+        return value
+    }
+    private static func recovery(_ amount: Double, compress: Double, borrow: Double, cast: Double,
+                                 radius: Double) -> FinishParameters {
+        var value = Self.amount(.highlightCompensation, amount, radius: radius)
+        value.highlights = compress; value.shadows = borrow; value.midtones = cast
         return value
     }
     private static func rolloff(_ amount: Double, halation: Double, radius: Double) -> FinishParameters {

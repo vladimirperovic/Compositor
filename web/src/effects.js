@@ -4,6 +4,7 @@
 export const BASE = {
   enabled: false, amount: 50, shadows: 40, midtones: 60, highlights: 30,
   radius: 16, saturation: 0, palette: 0, contrastType: 0, protectShadows: 0, protectHighlights: 0,
+  tintShadows: 0, tintMidtones: 0, tintHighlights: 0,
 };
 
 const CONTRAST_TYPES = ['Standard', 'High Pass', 'Fine', 'Balanced', 'Strong'];
@@ -141,13 +142,43 @@ export const EFFECTS = [
       slider('Grain', 'highlights', 0, 100),
     ],
   },
+  {
+    kind: 16, key: 'threeWayColor', title: 'Three-Way Color', group: 'cinematic',
+    summary: "A colorist's three wheels: shadows, midtones and highlights each take their own temperature "
+      + 'and their own green-to-magenta tint.',
+    defaults: { amount: 60, shadows: -30, midtones: 0, highlights: 35 },
+    controls: [
+      { type: 'heading', text: 'Highlights' },
+      slider('Temperature', 'highlights', -100, 100),
+      slider('Tint', 'tintHighlights', -100, 100),
+      { type: 'heading', text: 'Midtones' },
+      slider('Temperature', 'midtones', -100, 100),
+      slider('Tint', 'tintMidtones', -100, 100),
+      { type: 'heading', text: 'Shadows' },
+      slider('Temperature', 'shadows', -100, 100),
+      slider('Tint', 'tintShadows', -100, 100),
+      { type: 'note', text: 'Temperature: cool below zero, warm above. Tint: green below zero, magenta above.' },
+    ],
+  },
+  {
+    kind: 17, key: 'highlightCompensation', title: 'Highlight Compensation', group: 'cinematic',
+    summary: 'Bring blown windows and lamps back: bend the top end down, let them borrow the shape of what '
+      + 'surrounds them, and take out the colour a clipped channel left behind.',
+    defaults: { amount: 70, highlights: 55, shadows: 45, midtones: 50, radius: 24 },
+    radius: { label: 'How far to borrow from', min: 4, max: 100 },
+    controls: [
+      slider('Compress the top end', 'highlights', 0, 100),
+      slider('Borrow shape', 'shadows', 0, 100),
+      slider('Take the cast out', 'midtones', 0, 100),
+    ],
+  },
 ];
 
 export const GROUPS = { core: 'Filters', photo: 'Photo realism', cinematic: 'Cinematic' };
 
 // Tone and detail first, then color, glow, lens and framing; grain sits on top, as a sensor's would,
 // and the Cinematic Look plays its own chain last.
-export const ORDER = [0, 3, 8, 2, 14, 1, 5, 12, 13, 9, 4, 11, 10, 6, 7, 15];
+export const ORDER = [17, 0, 3, 8, 2, 14, 1, 5, 12, 16, 13, 9, 4, 11, 10, 6, 7, 15];
 
 export const byKind = kind => EFFECTS.find(effect => effect.kind === kind);
 
@@ -172,6 +203,11 @@ export function isNeutral(kind, p) {
   if (kind === 12 || kind === 14) {
     return p.shadows === 0 && p.midtones === 0 && p.highlights === 0 && p.saturation === 0;
   }
+  if (kind === 16) {
+    return p.shadows === 0 && p.midtones === 0 && p.highlights === 0 && p.saturation === 0
+      && p.tintShadows === 0 && p.tintMidtones === 0 && p.tintHighlights === 0;
+  }
+  if (kind === 17) return p.shadows === 0 && p.midtones === 0 && p.highlights === 0;
   return false;
 }
 
@@ -224,6 +260,36 @@ export const PRESETS = [
     9: { amount: 35, highlights: 20, radius: 24 },
     6: { amount: 15 },
     7: { amount: 18, radius: 1.5 },
+  }),
+  // The interior problem Corona's highlight compression exists for, solved after the render.
+  look('window-light', 'Window Light', {
+    17: { amount: 75, highlights: 60, shadows: 50, midtones: 55, radius: 26 },
+    0: { amount: 35, contrastType: 3, shadows: 20, midtones: 30, highlights: 8, protectHighlights: 30 },
+    5: { amount: 45, shadows: 10, saturation: 4 },
+  }),
+  // Three wheels, the way a colorist would set them: cool shade, warm light, a whisper of green through
+  // the middle so the whites do not go pink.
+  look('colorist', 'Colorist', {
+    14: { amount: 50, shadows: 18, midtones: 20, highlights: 45 },
+    16: { amount: 65, shadows: -35, midtones: -5, highlights: 40,
+          tintShadows: 6, tintMidtones: -8, tintHighlights: 4 },
+    7: { amount: 22, radius: 1.5 },
+  }),
+  // Dusk: the light that is left goes warm, everything it does not reach goes blue.
+  look('blue-hour', 'Blue Hour', {
+    16: { amount: 70, shadows: -55, midtones: -15, highlights: 45,
+          tintShadows: -4, tintMidtones: 0, tintHighlights: 6 },
+    9: { amount: 45, highlights: 35, radius: 26 },
+    4: { amount: 30, radius: 34 },
+    6: { amount: 22 },
+    7: { amount: 28, radius: 1.5 },
+  }),
+  // Overcast: nothing to recover, everything to lift, and no grain to muddy a clean grey day.
+  look('overcast-exterior', 'Overcast Exterior', {
+    0: { amount: 45, contrastType: 0, shadows: 25, midtones: 40, highlights: 15, protectShadows: 15 },
+    2: { amount: 40 },
+    13: { amount: 30, contrastType: 0, highlights: 40, midtones: 45, shadows: -12 },
+    5: { amount: 40, shadows: 8, saturation: 6 },
   }),
   look('carbon-monochrome', 'Carbon Monochrome', {
     0: { amount: 40, contrastType: 0, shadows: 30, midtones: 45, highlights: 20 },

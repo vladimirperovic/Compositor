@@ -43,7 +43,8 @@ function activeStack(scale) {
     const radius = effect.radius ? p.radius * scale : p.radius;
     values.push(kind, p.amount / 100, p.shadows / 100, p.midtones / 100, p.highlights / 100,
       radius, p.saturation / 100, p.palette, p.contrastType,
-      p.protectShadows / 100, p.protectHighlights / 100, state.seed, scale);
+      p.protectShadows / 100, p.protectHighlights / 100, state.seed, scale,
+      p.tintShadows / 100, p.tintMidtones / 100, p.tintHighlights / 100);
     count += 1;
   }
   return { values: new Float32Array(values), count };
@@ -53,6 +54,7 @@ function activeStack(scale) {
 // one; because the core can process a region of a larger image — and says through dk_reach how many rows
 // of neighbours a band needs to come out identical to the whole — the bands can simply be sewn back
 // together. This is how the page uses every core without shared memory or cross-origin isolation.
+const SLOTS = 16;   // floats per effect, matching DK_SLOTS in darkroom.c
 const POOL_SIZE = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) - 1));
 
 const pool = [];
@@ -174,7 +176,7 @@ async function process(data, width, height, scale, keep = null) {
   const keys = [];
   let running = '';
   for (let i = 0; i < total; i += 1) {
-    running += '|' + steps.subarray(i * 13, (i + 1) * 13).join(',');
+    running += '|' + steps.subarray(i * SLOTS, (i + 1) * SLOTS).join(',');
     keys.push(running);
   }
 
@@ -192,7 +194,7 @@ async function process(data, width, height, scale, keep = null) {
 
   const started = performance.now();
   for (let i = from; i < total; i += 1) {
-    current = await applyStage(current, width, height, steps.subarray(i * 13, (i + 1) * 13), reaches[i]);
+    current = await applyStage(current, width, height, steps.subarray(i * SLOTS, (i + 1) * SLOTS), reaches[i]);
     if (!kept) continue;
     const room = stored + current.length <= CACHE_BUDGET;
     kept.keys[i] = room ? keys[i] : null;

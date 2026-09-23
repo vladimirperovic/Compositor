@@ -4,7 +4,7 @@
 #include "FinishPixels.h"
 #include <stdint.h>
 
-enum { DK_SLOTS = 13, DK_MAX_EFFECTS = 32 };
+enum { DK_SLOTS = 16, DK_MAX_EFFECTS = 32 };
 
 static void dk_read(const float *values, FinishEffectSettings *effect) {
     effect->kind = (int)values[0];
@@ -20,6 +20,9 @@ static void dk_read(const float *values, FinishEffectSettings *effect) {
     effect->protect_highlights = values[10];
     effect->seed = (uint32_t)values[11];
     effect->scale = values[12];
+    effect->tint_shadows = values[13];
+    effect->tint_midtones = values[14];
+    effect->tint_highlights = values[15];
 }
 
 static void dk_write(float *values, const FinishEffectSettings *effect) {
@@ -36,6 +39,9 @@ static void dk_write(float *values, const FinishEffectSettings *effect) {
     values[10] = effect->protect_highlights;
     values[11] = (float)effect->seed;
     values[12] = effect->scale;
+    values[13] = effect->tint_shadows;
+    values[14] = effect->tint_midtones;
+    values[15] = effect->tint_highlights;
 }
 
 // The stack as the processor will really run it, so the page can run it a step at a time: cache what each
