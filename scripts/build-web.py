@@ -2,13 +2,21 @@
 """Builds the browser version of the filters: the same C core, compiled to WebAssembly, next to the page.
 
     python3 scripts/build-web.py [--serve] [--port 8777]
+    python3 scripts/build-web.py --into ~/path/to/site/darkroom
 
-Output is build/web/, a folder of static files — index.html, the page's script and style, and darkroom.wasm.
-Nothing runs on the server, so publishing it is a copy into any folder that serves files.
+Output is build/web/, a folder of static files — index.html, the page's script and style, darkroom.wasm and
+an example image. Nothing runs on the server, so publishing it is a copy into any folder that serves files.
+`--into` does that copy, removes what an earlier build left behind, and writes the .htaccess the page needs
+there: WebAssembly will not compile without 'wasm-unsafe-eval' in the Content-Security-Policy, and a site's
+own policy will not have it.
 
-Needs Emscripten. If emcc is not on PATH, the script sources ../emsdk/emsdk_env.sh next to this repository.
+Every reference between the files carries ?v=<hash of this build>, so a browser holding the old page in its
+cache cannot end up running one new file against seven old ones.
+
+Needs Emscripten. If emcc is not on PATH, the script uses an emsdk checked out beside this repository.
 """
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -21,6 +29,44 @@ OUT = ROOT / "build/web"
 CORE = ROOT / "Compositor/Rendering"
 EMSDK = ROOT.parent / "emsdk"
 
+# One policy for the folder, replacing whatever the surrounding site sets: the page needs WebAssembly, its
+# own worker and the studio's fonts, and nothing else.
+POLICY = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; "
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+          "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; "
+          "object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'")
+
+HTACCESS = f"""# Darkroom — static files only, no PHP. Written by scripts/build-web.py; edits here are overwritten.
+DirectoryIndex index.html
+AddType application/wasm .wasm
+
+<IfModule mod_headers.c>
+    # The surrounding site's policy has no 'wasm-unsafe-eval', and two policies intersect rather than
+    # replace, so the inherited one is dropped from both tables before this one is set.
+    Header unset Content-Security-Policy
+    Header always unset Content-Security-Policy
+    Header set Content-Security-Policy "{POLICY}"
+
+    # Everything the page pulls in carries this build's version, so it can be kept for a year; the page
+    # itself is what points at the new version, and must not be.
+    <FilesMatch "\\.(js|css|wasm|jpg)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+    <FilesMatch "^index\\.html$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+
+    # Multithreading needs these two. The build is single-threaded for now, so they stay off; turning them
+    # on also means serving the fonts with crossorigin.
+    # Header set Cross-Origin-Opener-Policy "same-origin"
+    # Header set Cross-Origin-Embedder-Policy "require-corp"
+</IfModule>
+
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE application/wasm application/javascript text/css text/html
+</IfModule>
+"""
+
 
 def emcc():
     """emcc from PATH, else from an emsdk checked out beside this repository."""
@@ -30,61 +76,79 @@ def emcc():
     activated = EMSDK / ".emscripten"
     upstream = EMSDK / "upstream/emscripten/emcc"
     if activated.exists() and upstream.exists():
-        return [sys.executable, str(upstream) + ".py"] if not os.access(upstream, os.X_OK) else [str(upstream)]
+        return [str(upstream)] if os.access(upstream, os.X_OK) else [sys.executable, str(upstream) + ".py"]
     sys.exit(f"emcc not found. Install Emscripten, or check out emsdk at {EMSDK} and run ./emsdk activate latest")
 
 
-def module(name, debug, threaded=False):
-    """The WebAssembly build of the core."""
-    command = emcc() + [
+def module(name, debug):
+    """The WebAssembly build of the core, as a classic script the worker pulls in with importScripts."""
+    subprocess.run(emcc() + [
         str(ROOT / "web/wasm/darkroom.c"), str(CORE / "FinishPixels.c"),
         # web/wasm comes first: it holds the stand-in for libdispatch the core includes.
         "-I", str(ROOT / "web/wasm"), "-I", str(CORE),
         "-O3" if not debug else "-O0",
         "-std=c11", "-Wall", "-Wextra",
-        # A classic script the worker pulls in with importScripts: an ES module worker cannot start the
-        # thread pool's own workers. Memory grows with the image it is given.
-        "-sMODULARIZE=1", f"-sEXPORT_NAME={'createDarkroomThreads' if threaded else 'createDarkroom'}",
-        "-sENVIRONMENT=web,worker", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=64MB", "-sSTACK_SIZE=1MB",
+        "-sMODULARIZE=1", "-sEXPORT_NAME=createDarkroom", "-sENVIRONMENT=web,worker",
+        "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=64MB", "-sSTACK_SIZE=1MB",
         "-sEXPORTED_FUNCTIONS=_dk_apply,_dk_reach,_dk_is_opaque,_dk_premultiply,_dk_unpremultiply,_malloc,_free",
         "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32",
         "-o", str(OUT / name),
-    ]
-    if threaded:
-        # The pool is sized once, when the module loads, and the workers stay parked between passes.
-        command += ["-pthread", "-sPTHREAD_POOL_SIZE=Math.min(12,Math.max(2,(navigator.hardwareConcurrency||4)-1))",
-                    "-sPTHREAD_POOL_SIZE_STRICT=0"]
-    subprocess.run(command, check=True)
+    ], check=True)
 
 
 def build(debug=False):
-    OUT.mkdir(parents=True, exist_ok=True)
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    OUT.mkdir(parents=True)
     module("darkroom.js", debug)
-    for name in sorted(p.name for p in SRC.iterdir() if p.is_file()):
-        shutil.copy2(SRC / name, OUT / name)
-    # Multithreading in the browser needs the page to be cross-origin isolated; on Apache these two
-    # headers do it. Copied along so publishing the folder is enough.
-    (OUT / ".htaccess").write_text(
-        'Header set Cross-Origin-Opener-Policy "same-origin"\n'
-        'Header set Cross-Origin-Embedder-Policy "require-corp"\n'
-        "AddType application/wasm .wasm\n"
-        "<IfModule mod_deflate.c>\n"
-        "  AddOutputFilterByType DEFLATE application/wasm application/javascript text/css text/html\n"
-        "</IfModule>\n")
+    for source in sorted(p for p in SRC.iterdir() if p.is_file()):
+        shutil.copy2(source, OUT / source.name)
+
+    # One version for the whole build, so what a file references is always what this build produced.
+    digest = hashlib.sha256()
+    for name in sorted(p.name for p in OUT.iterdir() if p.is_file()):
+        digest.update(name.encode())
+        digest.update((OUT / name).read_bytes())
+    version = digest.hexdigest()[:10]
+    for path in OUT.iterdir():
+        if path.suffix in {".html", ".js", ".css"}:
+            text = path.read_text()
+            if "%%V%%" in text:
+                path.write_text(text.replace("%%V%%", version))
+    (OUT / ".htaccess").write_text(HTACCESS)
+
     total = sum(p.stat().st_size for p in OUT.iterdir() if p.is_file())
-    print(f"Built {OUT} ({total / 1024:.0f} KB total)")
-    for p in sorted(OUT.iterdir()):
-        if p.is_file():
-            print(f"  {p.name:<16} {p.stat().st_size / 1024:8.1f} KB")
+    print(f"Built {OUT} — version {version}, {total / 1024:.0f} KB")
+    for path in sorted(OUT.iterdir()):
+        if path.is_file():
+            print(f"  {path.name:<16} {path.stat().st_size / 1024:8.1f} KB")
+    return version
+
+
+def publish(target):
+    """Copies the build into a folder a web server serves, or a repository behind one."""
+    target = Path(target).expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    built = {p.name for p in OUT.iterdir() if p.is_file()}
+    stale = [p for p in target.iterdir() if p.is_file() and p.name not in built]
+    for path in stale:
+        path.unlink()
+    for name in sorted(built):
+        shutil.copy2(OUT / name, target / name)
+    left = f", removed {len(stale)} left by an older build" if stale else ""
+    print(f"\nPublished {len(built)} files to {target}{left}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--into", help="also copy the build into this folder")
     parser.add_argument("--serve", action="store_true", help="serve build/web on localhost afterwards")
     parser.add_argument("--port", type=int, default=8777)
     args = parser.parse_args()
     build(args.debug)
+    if args.into:
+        publish(args.into)
     if args.serve:
         subprocess.run([sys.executable, str(ROOT / "scripts/serve-web.py"), "--port", str(args.port)])
 

@@ -1,7 +1,7 @@
 // Darkroom in the browser. The filters themselves are the desktop app's C core compiled to WebAssembly;
 // this file is only the page around them: opening an image, keeping a screen-sized preview responsive,
 // cropping, and handing the full resolution to the encoder when the image is saved.
-import { EFFECTS, GROUPS, ORDER, PRESETS, byKind, defaultsFor, freshSettings, isNeutral, settingsFor } from './effects.js';
+import { EFFECTS, GROUPS, ORDER, PRESETS, byKind, defaultsFor, freshSettings, isNeutral, settingsFor } from './effects.js?v=%%V%%';
 
 const PREVIEW_LIMIT = 3_500_000;  // preview pixels; beyond this the screen copy is scaled down further
 
@@ -56,7 +56,7 @@ let nextJob = 1;
 const pending = new Map();
 
 function startWorker() {
-  worker = new Worker(new URL('./worker.js', import.meta.url));
+  worker = new Worker(new URL('./worker.js?v=%%V%%', import.meta.url));
   worker.addEventListener('message', event => {
     const { id, ok, buffer, error, hello } = event.data;
     if (hello) { threads = event.data.threads; return; }
@@ -466,7 +466,7 @@ function wire() {
   el('hide')?.addEventListener('click', () => { document.body.classList.add('panel-hidden'); paint(); });
   el('file').addEventListener('change', event => open(event.target.files[0]));
   el('example').addEventListener('click', async () => {
-    const response = await fetch('sample.jpg');
+    const response = await fetch('sample.jpg?v=%%V%%');
     open(new File([await response.blob()], 'example.jpg', { type: 'image/jpeg' }));
   });
 

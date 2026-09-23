@@ -283,7 +283,9 @@ input[type=range] {
 body.editing { overflow: hidden; }
 body.editing .masthead,
 body.editing .intro,
-body.editing .colophon { display: none; }
+body.editing .colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+
+.colophon { display: none; }
 
 body.editing .workspace {
   position: fixed;
@@ -413,6 +415,8 @@ body.editing:not(.panel-hidden) .panel-toggle { display: none; }
 
 .status { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
+.colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+
 .colophon {
   margin: 34px 40px 40px;
   padding-top: 18px;
@@ -448,6 +452,10 @@ body.editing:not(.panel-hidden) .panel-toggle { display: none; }
 @media (max-width: 1040px) {
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .panel { position: static; max-height: none; }
-  .masthead, .intro, .workspace, .toolbar, .colophon { padding-left: 20px; padding-right: 20px; }
-  .toolbar, .colophon { margin-left: 20px; margin-right: 20px; }
+  .masthead, .intro, .workspace, .toolbar, .colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+
+.colophon { padding-left: 20px; padding-right: 20px; }
+  .toolbar, .colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+
+.colophon { margin-left: 20px; margin-right: 20px; }
 }

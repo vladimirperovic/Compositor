@@ -6,8 +6,8 @@ let wasm = null;
 const threads = false;
 
 const ready = (async () => {
-  importScripts('darkroom.js');
-  wasm = await self.createDarkroom();
+  importScripts('darkroom.js?v=%%V%%');
+  wasm = await self.createDarkroom({ locateFile: file => `${file}?v=%%V%%` });
 })();
 
 ready.then(() => self.postMessage({ hello: true, threads }));

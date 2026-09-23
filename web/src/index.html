@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=%%V%%">
 </head>
 <body>
 <header class="masthead">
@@ -32,7 +32,7 @@
       <p class="drop-title">Drop an image, or <button type="button" class="link" id="pick">choose a file</button></p>
       <p class="drop-note">JPEG, PNG, WebP or TIFF. Large renders are fine — the preview works at screen size
         and the full resolution is processed only when you save.</p>
-      <p class="drop-note">Or <button type="button" class="link" id="example">try it on an example render</button>.</p>
+      <p class="drop-note">Or <button type="button" class="link" id="example">try it on one of our renders</button>.</p>
     </div>
     <div class="viewer" id="viewer" hidden>
       <canvas id="canvas"></canvas>
@@ -89,10 +89,11 @@
 
 <footer class="colophon">
   <p>Processing runs in your browser through the same C code as the desktop version, compiled to
-    WebAssembly. Nothing is uploaded, and nothing is stored.</p>
+    WebAssembly. Nothing is uploaded, and nothing is stored. The example image is a render from our own
+    project, <a href="https://vladimirperovic.com/project.php?id=etr">a private apartment interior</a>.</p>
 </footer>
 
 <input type="file" id="file" accept="image/*" hidden>
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=%%V%%"></script>
 </body>
 </html>
