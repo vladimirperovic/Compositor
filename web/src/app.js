@@ -105,6 +105,24 @@ function viewBox() {
 
 const pixelRatio = () => Math.min(2, window.devicePixelRatio || 1);
 
+/// The editing view: the image over the whole window, filters beside it. Leaving keeps the image loaded
+/// and gives the page back, with one button to step into it again.
+function enterEditing() {
+  document.body.classList.add('editing');
+  // On a phone the sheet would cover the picture, so it starts out of the way behind its own button.
+  document.body.classList.toggle('panel-hidden', window.innerWidth <= 1080);
+  el('leave').textContent = 'Close';
+  measureChrome();
+  if (state.source) { buildPreview(); schedule(); }
+}
+
+function leave() {
+  document.body.classList.remove('editing');
+  el('leave').textContent = 'Edit image';
+  measureChrome();
+  if (state.source) { buildPreview(); schedule(); }
+}
+
 /// The toolbar wraps to two rows on a narrow screen, so the panel and the image are told how tall it is.
 function measureChrome() {
   document.documentElement.style.setProperty('--toolbar-height', `${el('toolbar').offsetHeight}px`);
@@ -412,13 +430,9 @@ function adopt(source) {
   el('viewer').hidden = false;
   el('leave').hidden = false;
   el('panelToggle').hidden = false;
-  document.body.classList.add('editing');
-  // On a phone the sheet would cover the picture, so it starts out of the way behind its own button.
-  document.body.classList.toggle('panel-hidden', window.innerWidth < 900);
-  measureChrome();
+  document.body.classList.add('has-image');
   for (const id of ['compare', 'cropMode', 'zoom', 'save', 'reset']) el(id).disabled = false;
-  buildPreview();
-  schedule();
+  enterEditing();
 }
 
 function cropTo(rect) {
@@ -542,17 +556,13 @@ function wire() {
   el('quality').addEventListener('input', () => { el('qualityValue').textContent = el('quality').value; });
   el('save').addEventListener('click', save);
 
-  // Leaving the editing view keeps the image; it only gives the page back.
-  const leave = () => {
-    if (!document.body.classList.contains('editing')) return;
-    document.body.classList.remove('editing');
-    buildPreview();
-    schedule();
-  };
-  el('leave').addEventListener('click', leave);
+  el('leave').addEventListener('click', () => {
+    if (document.body.classList.contains('editing')) leave();
+    else enterEditing();
+  });
   el('panelToggle').addEventListener('click', () => { document.body.classList.remove('panel-hidden'); paint(); });
   addEventListener('keydown', event => {
-    if (event.key === 'Escape') leave();
+    if (event.key === 'Escape' && document.body.classList.contains('editing')) leave();
     if (event.key === 'Tab' && state.source) {
       event.preventDefault();
       document.body.classList.toggle('panel-hidden');

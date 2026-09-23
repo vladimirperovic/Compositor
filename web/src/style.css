@@ -5,10 +5,12 @@
   --muted: #6b6760;
   --line: rgba(14, 14, 16, .14);
   --accent: #8b6f47;
-  --glass: rgba(245, 241, 234, .8);
+  --glass: rgba(245, 241, 234, .82);
   --stage: #17171a;
   --ease: cubic-bezier(.15, .2, .1, 1);
-  --panel-width: 330px;
+  --rail-width: 238px;
+  --panel-width: 318px;
+  --toolbar-height: 58px;
 }
 
 * { box-sizing: border-box; }
@@ -35,7 +37,19 @@ button, select, input { font: inherit; color: inherit; }
   font-weight: 500;
 }
 
-/* Masthead and intro ---------------------------------------------------- */
+.link {
+  background: none;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: #c6a878;
+}
+
+.link.small { font-size: 11px; color: var(--muted); }
+
+/* The page around the tool ---------------------------------------------- */
 
 .masthead {
   display: flex;
@@ -68,10 +82,7 @@ button, select, input { font: inherit; color: inherit; }
 
 .masthead nav a:hover { color: var(--ink); border-color: var(--line); }
 
-.intro {
-  padding: 46px 40px 26px;
-  max-width: 760px;
-}
+.intro { padding: 46px 40px 26px; max-width: 760px; }
 
 .intro h1 {
   font-family: 'Cormorant Garamond', Georgia, serif;
@@ -82,23 +93,38 @@ button, select, input { font: inherit; color: inherit; }
   letter-spacing: -.5px;
 }
 
-.lede {
-  margin: 0;
-  max-width: 62ch;
-  font-size: 15px;
-  line-height: 1.65;
+.lede { margin: 0; max-width: 62ch; font-size: 15px; line-height: 1.65; color: var(--muted); }
+
+.colophon {
+  margin: 34px 40px 40px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  font-size: 11.5px;
+  line-height: 1.7;
   color: var(--muted);
+  max-width: 62ch;
 }
 
-/* Workspace ------------------------------------------------------------- */
+.colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
 
-.workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--panel-width);
-  gap: 26px;
-  padding: 18px 40px 0;
-  align-items: start;
+/* Until an image is open, the page is an invitation to drop one and nothing else. Once one is open but
+   the editing view has been left, the toolbar stays with the page so the way back is one click. */
+body:not(.has-image) .toolbar,
+body:not(.editing) .sheet { display: none; }
+
+body:not(.editing) .toolbar {
+  position: static;
+  margin: 14px 40px 0;
+  padding: 14px 0 16px;
+  background: none;
+  backdrop-filter: none;
+  border-bottom: 0;
+  border-top: 1px solid var(--line);
 }
+
+/* The workspace --------------------------------------------------------- */
+
+.workspace { padding: 18px 40px 0; }
 
 .stage {
   position: relative;
@@ -111,13 +137,7 @@ button, select, input { font: inherit; color: inherit; }
   overflow: auto;
 }
 
-.dropzone {
-  text-align: center;
-  padding: 60px 28px;
-  color: rgba(245, 241, 234, .82);
-  max-width: 460px;
-}
-
+.dropzone { text-align: center; padding: 60px 28px; color: rgba(245, 241, 234, .82); max-width: 460px; }
 .dropzone .kicker { color: rgba(245, 241, 234, .45); }
 
 .drop-title {
@@ -127,19 +147,9 @@ button, select, input { font: inherit; color: inherit; }
   margin: 0 0 14px;
 }
 
-.drop-note { font-size: 12.5px; line-height: 1.7; color: rgba(245, 241, 234, .5); margin: 0; }
+.drop-note { font-size: 12.5px; line-height: 1.7; color: rgba(245, 241, 234, .5); margin: 0 0 6px; }
 
 .stage.dragging { outline: 1px solid var(--accent); outline-offset: -9px; }
-
-.link {
-  background: none;
-  border: none;
-  border-bottom: 1px solid currentColor;
-  padding: 0;
-  cursor: pointer;
-  font: inherit;
-  color: #c6a878;
-}
 
 .viewer { position: relative; margin: auto; line-height: 0; }
 .viewer canvas { display: block; max-width: 100%; height: auto; }
@@ -179,7 +189,7 @@ button, select, input { font: inherit; color: inherit; }
 .crop-actions {
   position: fixed;
   left: 50%;
-  bottom: 96px;
+  bottom: 28px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -189,24 +199,69 @@ button, select, input { font: inherit; color: inherit; }
   border: 1px solid var(--line);
   padding: 10px 14px;
   font-size: 12.5px;
-  z-index: 5;
+  z-index: 6;
 }
 
-/* Panel ----------------------------------------------------------------- */
-
-.panel {
+.crop-actions button {
+  background: transparent;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, .42);
-  max-height: calc(62vh + 2px);
-  overflow: auto;
-  position: sticky;
-  top: 18px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
 }
 
-.panel-head { padding: 18px 18px 14px; border-bottom: 1px solid var(--line); }
+/* Editing: the image takes the screen, the filters stand to its left and their controls to its right. */
+
+body.editing { overflow: hidden; }
+body.editing .masthead,
+body.editing .intro,
+body.editing .colophon { display: none; }
+
+body.editing .workspace { position: fixed; inset: 0; padding: 0; z-index: 3; }
+
+body.editing .stage {
+  position: absolute;
+  inset: var(--toolbar-height) 0 0 0;
+  border: 0;
+  min-height: 0;
+  padding: 18px;
+  transition: padding .35s var(--ease);
+}
+
+/* The image keeps clear of both panels rather than sliding under them. */
+body.editing:not(.panel-hidden) .stage {
+  padding-left: calc(var(--rail-width) + 30px);
+  padding-right: calc(var(--panel-width) + 30px);
+}
+
+.sheet { display: contents; }
+
+body.editing .panel,
+body.editing .inspector {
+  position: absolute;
+  top: calc(var(--toolbar-height) + 14px);
+  bottom: 14px;
+  overflow: auto;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(14, 14, 16, .1);
+  box-shadow: 0 18px 50px rgba(14, 14, 16, .28);
+  transition: opacity .3s var(--ease), transform .3s var(--ease);
+  z-index: 4;
+}
+
+body.editing .panel { left: 14px; width: var(--rail-width); }
+body.editing .inspector { right: 14px; width: var(--panel-width); }
+
+body.editing.panel-hidden .panel,
+body.editing.panel-hidden .inspector { opacity: 0; pointer-events: none; }
+body.editing.panel-hidden .panel { transform: translateX(-14px); }
+body.editing.panel-hidden .inspector { transform: translateX(14px); }
+
+/* Panels ---------------------------------------------------------------- */
+
+.panel-head { padding: 16px 16px 14px; border-bottom: 1px solid var(--line); }
 .panel-head-row { display: flex; align-items: baseline; justify-content: space-between; }
-.link.small { font-size: 11px; color: var(--muted); }
-body:not(.editing) .panel-head-row .link { display: none; }
 .panel-head .kicker { margin-bottom: 8px; }
 
 select {
@@ -219,7 +274,7 @@ select {
   cursor: pointer;
 }
 
-.filters { padding: 12px 10px; border-bottom: 1px solid var(--line); }
+.filters { padding: 10px 8px 16px; }
 
 .group-label {
   font-size: 10px;
@@ -232,8 +287,8 @@ select {
 .filter {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 9px;
+  gap: 9px;
+  padding: 6px 8px;
   cursor: pointer;
   border: 1px solid transparent;
   transition: background .3s var(--ease);
@@ -242,10 +297,10 @@ select {
 .filter:hover { background: rgba(14, 14, 16, .035); }
 .filter.selected { background: rgba(139, 111, 71, .1); border-color: rgba(139, 111, 71, .28); }
 .filter input { accent-color: var(--accent); margin: 0; cursor: pointer; }
-.filter span { font-size: 13px; }
+.filter span { font-size: 12.5px; }
 .filter.on span { font-weight: 500; }
 
-.controls { padding: 18px; }
+.controls { padding: 16px; }
 .controls .summary { font-size: 12.5px; line-height: 1.7; color: var(--muted); margin: 0 0 18px; }
 .controls.disabled .control { opacity: .38; pointer-events: none; }
 
@@ -262,11 +317,7 @@ select {
 .control-head b { font-weight: 500; }
 .control-head output { font-variant-numeric: tabular-nums; font-size: 11px; color: var(--muted); }
 
-input[type=range] {
-  width: 100%;
-  accent-color: var(--accent);
-  height: 18px;
-}
+input[type=range] { width: 100%; accent-color: var(--accent); height: 18px; }
 
 .control-heading {
   font-size: 10px;
@@ -277,109 +328,31 @@ input[type=range] {
 }
 
 .control-note { font-size: 11.5px; color: var(--muted); margin: -6px 0 14px; }
-
-/* Editing: the image takes the screen, and the filters float over it ------ */
-
-body.editing { overflow: hidden; }
-body.editing .masthead,
-body.editing .intro,
-body.editing .colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
-
-.colophon { display: none; }
-
-body.editing .workspace {
-  position: fixed;
-  inset: 0;
-  display: block;
-  padding: 0;
-  gap: 0;
-  z-index: 3;
-}
-
-body.editing .stage {
-  position: absolute;
-  inset: 0 0 var(--toolbar-height, 62px);
-  border: 0;
-  min-height: 0;
-  padding: 18px;
-  transition: padding .35s var(--ease);
-}
-
-/* The image keeps clear of the floating panel rather than sliding under it. */
-body.editing:not(.panel-hidden) .stage { padding-right: calc(var(--panel-width) + 34px); }
-
-body.editing .panel {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  bottom: calc(var(--toolbar-height, 62px) + 16px);
-  width: var(--panel-width);
-  max-height: none;
-  background: var(--glass);
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(14, 14, 16, .1);
-  box-shadow: 0 18px 50px rgba(14, 14, 16, .28);
-  transition: opacity .35s var(--ease), transform .35s var(--ease);
-  z-index: 4;
-}
-
-body.editing.panel-hidden .panel {
-  opacity: 0;
-  transform: translateX(14px);
-  pointer-events: none;
-}
-
-body.editing .toolbar {
-  position: fixed;
-  inset: auto 0 0 0;
-  margin: 0;
-  padding: 11px 20px;
-  background: var(--glass);
-  backdrop-filter: blur(14px);
-  border-top: 1px solid var(--line);
-  z-index: 4;
-}
-
-.leave, .panel-toggle {
-  position: absolute;
-  top: 16px;
-  z-index: 5;
-  background: var(--glass);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(14, 14, 16, .1);
-  padding: 7px 13px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: border-color .3s var(--ease);
-}
-
-.leave { left: 16px; }
-.panel-toggle { right: 16px; }
-body.editing:not(.panel-hidden) .panel-toggle { display: none; }
-.leave:hover, .panel-toggle:hover { border-color: var(--ink); }
+.panel-foot { padding: 0 16px 18px; }
 
 /* Toolbar --------------------------------------------------------------- */
 
 .toolbar {
-  position: sticky;
-  bottom: 0;
+  position: fixed;
+  inset: 0 0 auto 0;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 18px;
   flex-wrap: wrap;
-  margin: 18px 40px 0;
-  padding: 14px 0 16px;
-  border-top: 1px solid var(--line);
-  background: linear-gradient(to top, var(--paper) 72%, rgba(245, 241, 234, 0));
+  padding: 10px 16px;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+  z-index: 5;
 }
 
-.tools, .save { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tools, .save { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 
 .toolbar button {
   background: transparent;
   border: 1px solid var(--line);
-  padding: 8px 14px;
+  padding: 7px 13px;
   font-size: 12.5px;
   cursor: pointer;
   transition: border-color .3s var(--ease), background .3s var(--ease);
@@ -399,63 +372,55 @@ body.editing:not(.panel-hidden) .panel-toggle { display: none; }
 
 .toolbar button.primary:hover:not(:disabled) { background: #7a6140; }
 
-.crop-actions button {
-  background: transparent;
-  border: 1px solid var(--line);
-  padding: 6px 12px;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-
 .save select { width: auto; }
 
 .quality { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-.quality input { width: 110px; }
+.quality input { width: 104px; }
 .quality output { font-variant-numeric: tabular-nums; width: 24px; }
 
 .status { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-.colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+/* Narrow screens: the two panels become one sheet along the bottom ------- */
 
-.colophon {
-  margin: 34px 40px 40px;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
-  font-size: 11.5px;
-  line-height: 1.7;
-  color: var(--muted);
-  max-width: 62ch;
-}
+@media (max-width: 1080px) {
+  .masthead, .intro, .workspace, .colophon { padding-left: 20px; padding-right: 20px; }
+  .colophon { margin-left: 20px; margin-right: 20px; }
 
-.panel-foot { padding: 0 18px 18px; }
-
-/* On a narrow screen the panel becomes a sheet along the bottom, and the image keeps the rest. */
-@media (max-width: 900px) {
-  .toolbar { padding: 9px 12px; gap: 10px; }
-  .toolbar button { padding: 7px 11px; font-size: 12px; }
-  .status { display: none; }
-  .quality { gap: 6px; }
-  .quality input { width: 74px; }
-
-  body.editing .panel {
-    top: auto;
+  body.editing .sheet {
+    display: block;
+    position: fixed;
     left: 12px;
     right: 12px;
-    bottom: calc(var(--toolbar-height, 62px) + 12px);
-    width: auto;
-    max-height: 42vh;
+    bottom: 12px;
+    max-height: 44vh;
+    overflow: auto;
+    background: var(--glass);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(14, 14, 16, .1);
+    box-shadow: 0 18px 50px rgba(14, 14, 16, .28);
+    transition: opacity .3s var(--ease), transform .3s var(--ease);
+    z-index: 4;
   }
-  body.editing:not(.panel-hidden) .stage { padding-right: 18px; padding-bottom: calc(42vh + 22px); }
-  body.editing.panel-hidden .panel { transform: translateY(14px); }
-}
 
-@media (max-width: 1040px) {
-  .workspace { grid-template-columns: minmax(0, 1fr); }
-  .panel { position: static; max-height: none; }
-  .masthead, .intro, .workspace, .toolbar, .colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+  body.editing .panel,
+  body.editing .inspector {
+    position: static;
+    width: auto;
+    background: none;
+    backdrop-filter: none;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+    transition: none;
+    opacity: 1;
+    transform: none;
+  }
 
-.colophon { padding-left: 20px; padding-right: 20px; }
-  .toolbar, .colophon a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--line); }
+  body.editing .inspector { border-top: 1px solid var(--line); }
+  body.editing.panel-hidden .sheet { opacity: 0; transform: translateY(12px); pointer-events: none; }
 
-.colophon { margin-left: 20px; margin-right: 20px; }
+  body.editing:not(.panel-hidden) .stage { padding: 14px; padding-bottom: calc(44vh + 20px); }
+
+  .status { display: none; }
+  .quality input { width: 74px; }
 }
