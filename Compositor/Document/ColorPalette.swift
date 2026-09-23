@@ -98,6 +98,8 @@ extension EditorSession {
             case .gradientMap(let highlights):
                 // The end has been previewing the working color; Cancel puts the original back.
                 setGradientMapColor(commit ? colorPicker.color : colorPicker.original, highlights: highlights)
+            case .vignette:
+                setVignetteColor(commit ? colorPicker.color : colorPicker.original)
             }
         }
         colorPicker = nil
@@ -109,6 +111,12 @@ extension EditorSession {
         colorPicker = ColorPickerState(target: .gradientMap(highlights: highlights),
                                        original: PaletteColor(red: value.red, green: value.green, blue: value.blue))
     }
+    func openVignetteColorPicker() {
+        guard canEditPalette, colorPicker == nil, let edit = filterEdit, edit.kind == .vignette, !edit.committing else { return }
+        let value = edit.settings.vignetteColor
+        colorPicker = ColorPickerState(target: .vignette,
+                                       original: PaletteColor(red: value.red, green: value.green, blue: value.blue))
+    }
     /// While the picker is open on an effect's color, the canvas follows its working color.
     func previewEffectColor() {
         guard let colorPicker, case .effect(let kind) = colorPicker.target else { return }
@@ -118,6 +126,17 @@ extension EditorSession {
     func previewGradientMapColor() {
         guard let colorPicker, case .gradientMap(let highlights) = colorPicker.target else { return }
         setGradientMapColor(colorPicker.color, highlights: highlights)
+    }
+    func previewVignetteColor() {
+        guard let colorPicker, case .vignette = colorPicker.target else { return }
+        setVignetteColor(colorPicker.color)
+    }
+    private func setVignetteColor(_ color: PaletteColor) {
+        guard let edit = filterEdit, edit.kind == .vignette, !edit.committing else { return }
+        var settings = edit.settings
+        settings.vignetteColor = AdjustmentColor(color)
+        guard settings != edit.settings else { return }
+        updateFilter(settings, preview: edit.preview)
     }
     private func setGradientMapColor(_ color: PaletteColor, highlights: Bool) {
         guard let edit = filterEdit, edit.kind == .gradientMap, !edit.committing else { return }
@@ -164,6 +183,7 @@ enum ColorPickerTarget: Equatable {
     /// A layer effect's own color.
     case effect(kind: LayerEffectKind)
     case gradientMap(highlights: Bool)
+    case vignette
     case text(draftID: UUID?)
     var title: String {
         switch self {
@@ -171,6 +191,7 @@ enum ColorPickerTarget: Equatable {
         case .effect(let kind): return "Color Picker (\(kind.rawValue) Color)"
         case .palette(let background): return background ? "Color Picker (Background Color)" : "Color Picker (Foreground Color)"
         case .gradientMap(let highlights): return highlights ? "Color Picker (Gradient Map Highlights)" : "Color Picker (Gradient Map Shadows)"
+        case .vignette: return "Color Picker (Vignette Color)"
         }
     }
 }
