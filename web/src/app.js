@@ -98,8 +98,8 @@ const signature = scale => JSON.stringify([scale, state.seed, activeStack(scale)
 function viewBox() {
   const stage = el('stage');
   const style = getComputedStyle(stage);
-  const w = stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 16;
-  const h = stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) - 16;
+  const w = stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const h = stage.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
   return { w: Math.max(240, w), h: Math.max(200, h) };
 }
 
