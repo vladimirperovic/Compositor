@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darkroom — Vladimir Perovic Architects &amp; Associates</title>
+<meta name="description" content="Finishing filters for architectural renders and photographs. Everything runs in your browser; nothing is uploaded.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="masthead">
+  <a class="wordmark" href="https://vladimirperovic.com">Vladimir Perovic <span>Architects &amp; Associates</span></a>
+  <nav><a href="https://vladimirperovic.com">Back to the studio</a></nav>
+</header>
+
+<section class="intro">
+  <p class="kicker">A tool, free to use</p>
+  <h1>Darkroom</h1>
+  <p class="lede">Sixteen finishing filters for renders and photographs — the tonal work, the lens, the film.
+    Your image never leaves this page: it is read, processed and saved by your own browser.</p>
+</section>
+
+<main class="workspace" id="workspace">
+  <section class="stage" id="stage">
+    <div class="dropzone" id="dropzone">
+      <p class="kicker">Start here</p>
+      <p class="drop-title">Drop an image, or <button type="button" class="link" id="pick">choose a file</button></p>
+      <p class="drop-note">JPEG, PNG, WebP or TIFF. Large renders are fine — the preview works at screen size
+        and the full resolution is processed only when you save.</p>
+      <p class="drop-note">Or <button type="button" class="link" id="example">try it on an example render</button>.</p>
+    </div>
+    <div class="viewer" id="viewer" hidden>
+      <canvas id="canvas"></canvas>
+      <div class="crop-overlay" id="cropOverlay" hidden><div class="crop-rect" id="cropRect"></div></div>
+    </div>
+    <div class="busy" id="busy" hidden><span></span></div>
+  </section>
+
+  <aside class="panel" id="panel">
+    <div class="panel-head">
+      <p class="kicker">Looks</p>
+      <select id="presets" aria-label="Preset">
+        <option value="">Custom</option>
+      </select>
+    </div>
+    <div class="filters" id="filters"></div>
+    <div class="controls" id="controls"></div>
+  </aside>
+</main>
+
+<div class="toolbar" id="toolbar">
+  <div class="tools">
+    <button type="button" id="open">Open</button>
+    <button type="button" id="compare" class="hold">Before / after</button>
+    <button type="button" id="cropMode">Crop</button>
+    <button type="button" id="zoom">100%</button>
+    <button type="button" id="reset" class="quiet">Reset filters</button>
+  </div>
+  <div class="save">
+    <span class="status" id="status"></span>
+    <select id="format" aria-label="Format">
+      <option value="image/jpeg">JPEG</option>
+      <option value="image/webp">WebP</option>
+      <option value="image/png">PNG</option>
+    </select>
+    <label class="quality" id="qualityWrap">Quality
+      <input type="range" id="quality" min="40" max="100" step="1" value="92">
+      <output id="qualityValue">92</output>
+    </label>
+    <button type="button" id="save" class="primary">Save image</button>
+  </div>
+</div>
+
+<div class="crop-actions" id="cropActions" hidden>
+  <span>Drag on the image, then</span>
+  <button type="button" id="cropApply" class="primary">Crop</button>
+  <button type="button" id="cropCancel" class="quiet">Cancel</button>
+</div>
+
+<footer class="colophon">
+  <p>Processing runs in your browser through the same C code as the desktop version, compiled to
+    WebAssembly. Nothing is uploaded, and nothing is stored.</p>
+</footer>
+
+<input type="file" id="file" accept="image/*" hidden>
+<script type="module" src="app.js"></script>
+</body>
+</html>

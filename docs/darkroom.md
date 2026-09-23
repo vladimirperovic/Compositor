@@ -57,6 +57,26 @@ On an 8000 × 5333 opaque render on an 8-core Apple silicon Mac, Tonal Contrast,
 
 Source reference for Nik controls: [DxO Color Efex guide](https://userguides.dxo.com/nikcollection/en/color-efex/). Archviz context: [Chaos lens effects guide](https://www.chaos.com/blog/the-light-touch-your-complete-guide-to-v-ray-lens-effects) and [Chaos color corrections](https://docs.chaos.com/display/ARENA/Color%2BCorrections%2BTab). The five additional effects are a practical selection for renders, not a measured popularity ranking.
 
+## The browser version
+
+The same core runs on the web, because it is plain C with exactly one platform dependency: the
+`dispatch_apply_f` calls that spread each pass across cores. `web/wasm/dispatch/dispatch.h` stands in for
+them — a serial loop by default, a pool of pthreads when compiled with `-pthread` — and the pixels come out
+identical either way, which the C suite checks by running against both shims.
+
+`python3 scripts/build-web.py` compiles `FinishPixels.c` and `web/wasm/darkroom.c` to WebAssembly with
+Emscripten and assembles `build/web`: an HTML page, its script and style, `darkroom.wasm` (about 20 KB) and
+an example image. Nothing runs on the server, so publishing is a copy of that folder into any directory that
+serves files; the `.htaccess` it writes sets the two Cross-Origin headers a browser wants before it hands a
+page shared memory. `python3 scripts/serve-web.py` serves the same folder locally with those headers.
+
+The page keeps the desktop app's shape: the filter library with its three groups, the same presets, a
+screen-sized preview that drops to half size while a slider moves, crop, and JPEG/WebP/PNG export with a
+quality control. The full resolution is processed only when the image is saved or viewed at 100%. On this
+Mac, a 12 MP image with four filters takes 277 ms through libdispatch, 282 ms through a plain thread pool
+and 1141 ms with no threads at all — the last being what a browser does today without cross-origin
+isolation, and roughly what the page has to work with.
+
 ## Validation
 
 Run `sh scripts/test-render-finish.sh` for C tests under AddressSanitizer and UndefinedBehaviorSanitizer, and `python3 scripts/test-swift.py` for the Swift Testing suites without Xcode (set `COMPOSITOR_AI_MODEL_PATH` to the official checkpoint to include the GPU cases). The C tests cover all twelve effects, zero strength, alpha and row padding, separate tonal bands, negative contrast, distinct contrast modes, protection, transparent boundaries, tiny images and crops processed as regions. A standalone Swift check verifies Fit/Fill geometry, equal comparison panes, synchronized zoom anchors and Retina 1:1. `RenderFinishTests`, `RenderComparisonTests` and `AIUpscaleTests` cover settings normalization, neutral stacks, editor cancel/commit/undo (and Undo waiting for the edit), preset coding including older presets, Merged Visible, and the preview's stage cache matching a full render.

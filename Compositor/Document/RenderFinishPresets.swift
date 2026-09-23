@@ -80,16 +80,21 @@ final class RenderFinishPresets {
             $0[.vignette] = amount(.vignette, 18)
             $0[.sensorGrain] = amount(.sensorGrain, 30, radius: 1.5)
         },
-        // The post chain behind the cinematic CG of the late 2000s: a graded negative, a warm/cool split,
-        // diffusion and halation through the lens, and grain over all of it. One filter plays the whole thing.
-        look("cinematic-film", "Cinematic Film") {
+        // The post chain behind the film-like CG of the late 2000s: a graded negative, warm light against
+        // cool shadows, diffusion and halation through the lens, grain over all of it. One filter plays it.
+        look("cinema-negative", "Cinema Negative") {
             $0[.tonalContrast] = tonal(30, .balanced, shadows: 15, midtones: 25, highlights: 5, protectHighlights: 30)
             $0[.cinematicLook] = cinematic(60, split: 65, glow: 55, grain: 35, radius: 30)
         },
-        // The same chain pulled back to what a daylight interior can take, with the sky held down by a grad.
-        look("daylight-cinema", "Daylight Cinema") {
-            $0[.graduatedFilter] = graduated(30, from: .top, ends: 40, softness: 35, warmth: -10)
-            $0[.cinematicLook] = cinematic(40, split: 45, glow: 35, grain: 25, radius: 22)
+        // How commercial visualization is finished instead: glare and bloom, a held-back sky, air in the
+        // shadows and restrained color — and no sharpening at all, which is what gives renders away.
+        look("studio-daylight", "Studio Daylight") {
+            $0[.filmResponse] = film(55, lift: 20, curve: 15, shoulder: 45, saturation: -8)
+            $0[.graduatedFilter] = graduated(25, from: .top, ends: 45, softness: 40, warmth: -8)
+            $0[.bloom] = amount(.bloom, 30, radius: 36)
+            $0[.highlightRolloff] = rolloff(35, halation: 20, radius: 24)
+            $0[.vignette] = amount(.vignette, 15)
+            $0[.sensorGrain] = amount(.sensorGrain, 18, radius: 1.5)
         },
         look("carbon-monochrome", "Carbon Monochrome") {
             $0[.tonalContrast] = tonal(40, .standard, shadows: 30, midtones: 45, highlights: 20)
@@ -124,6 +129,18 @@ final class RenderFinishPresets {
                                   radius: Double) -> FinishParameters {
         var value = Self.amount(.cinematicLook, amount, radius: radius)
         value.shadows = split; value.midtones = glow; value.highlights = grain
+        return value
+    }
+    private static func film(_ amount: Double, lift: Double, curve: Double, shoulder: Double,
+                             saturation: Double) -> FinishParameters {
+        var value = Self.amount(.filmResponse, amount)
+        value.shadows = lift; value.midtones = curve; value.highlights = shoulder
+        value.saturation = saturation
+        return value
+    }
+    private static func rolloff(_ amount: Double, halation: Double, radius: Double) -> FinishParameters {
+        var value = Self.amount(.highlightRolloff, amount, radius: radius)
+        value.highlights = halation
         return value
     }
     private static func graduated(_ amount: Double, from edge: GradientEdge, ends: Double, softness: Double,
