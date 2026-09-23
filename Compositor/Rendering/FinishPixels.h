@@ -32,6 +32,12 @@ int finish_apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
 // How many pixels beyond a crop this effect reads, so a region rendered on its own matches the whole image.
 // 0 for per-pixel effects, and for an invalid or inactive one.
 int finish_effect_reach(const FinishEffectSettings *effect);
+// The stack as finish_apply_stack will actually run it: the Cinematic Look replaced by the chain it stands
+// for, inactive effects dropped. Returns how many effects that is, or 0 if `capacity` is too small for them
+// (count * 9 always suffices). A caller that runs the effects one at a time — to cache what each one
+// produced, or to spread each over several threads — needs this to see the real steps and their reaches.
+size_t finish_expand_stack(const FinishEffectSettings *effects, size_t count,
+                           FinishEffectSettings *out, size_t capacity);
 int finish_apply(uint8_t *rgba, size_t width, size_t height, size_t stride,
                  int kind, float amount, float shadows, float midtones, float highlights,
                  float radius, float saturation, int palette, int contrast_type,

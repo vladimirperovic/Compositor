@@ -72,10 +72,21 @@ page shared memory. `python3 scripts/serve-web.py` serves the same folder locall
 
 The page keeps the desktop app's shape: the filter library with its three groups, the same presets, a
 screen-sized preview that drops to half size while a slider moves, crop, and JPEG/WebP/PNG export with a
-quality control. The full resolution is processed only when the image is saved or viewed at 100%. On this
-Mac, a 12 MP image with four filters takes 277 ms through libdispatch, 282 ms through a plain thread pool
-and 1141 ms with no threads at all — the last being what a browser does today without cross-origin
-isolation, and roughly what the page has to work with.
+quality control. The full resolution is processed only when the image is saved or viewed at 100%.
+
+A browser hands one core to a page, so the work is split across several. The page runs the stack a step at
+a time — `finish_expand_stack` tells it what the steps really are, so the Cinematic Look's nine become nine
+— and cuts each step into horizontal bands, one per worker. A band carries `finish_effect_reach` extra rows
+above and below, which is exactly what makes it come out identical to the whole image, so the bands can be
+sewn back together. Splitting per step rather than per stack matters: a whole cinematic stack reads 248 rows
+of neighbours, one blur inside it only 69. What each step produced is kept, so moving one filter's slider
+starts from the step before it.
+
+On a 1400 × 1249 render with six workers: Natural Interior 294 → 132 ms, Studio Daylight 462 → 212 ms,
+Photographic 589 → 263 ms, Cinema Negative 828 → 328 ms, and moving the Grain slider inside the Cinematic
+Look 828 → 98 ms. The result was checked against a single whole-image call of the same stack: of 5.2 million
+colour channels, one differed, by one level. For scale, on this Mac a 12 MP image with four filters takes
+277 ms through libdispatch, 282 ms through a plain thread pool and 1141 ms with no threads at all.
 
 ## Validation
 

@@ -371,6 +371,25 @@ static size_t expand_look(const FinishEffectSettings *look, FinishEffectSettings
     return count;
 }
 
+size_t finish_expand_stack(const FinishEffectSettings *effects, size_t count,
+                           FinishEffectSettings *out, size_t capacity) {
+    if (!effects || !out) return 0;
+    size_t n = 0;
+    for (size_t e = 0; e < count; ++e) {
+        if (!valid_effect(&effects[e]) || clamp01(effects[e].amount) <= 0) continue;
+        if (effects[e].kind == FINISH_LOOK) {
+            FinishEffectSettings steps[FINISH_LOOK_STEPS];
+            size_t made = expand_look(&effects[e], steps);
+            if (n + made > capacity) return 0;
+            for (size_t i = 0; i < made; ++i) out[n++] = steps[i];
+        } else {
+            if (n + 1 > capacity) return 0;
+            out[n++] = effects[e];
+        }
+    }
+    return n;
+}
+
 int finish_effect_reach(const FinishEffectSettings *effect) {
     if (!effect || !valid_effect(effect) || clamp01(effect->amount) <= 0) return 0;
     if (effect->kind == FINISH_LOOK) {
@@ -485,22 +504,19 @@ int finish_apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
         || offset_y > full_height || height > full_height - offset_y || (!effects && count)) return 0;
     // Every effect is checked before a single pixel changes, and any Cinematic Look becomes the plain
     // effects it stands for, so the rest of the stack has one kind of work to do.
-    size_t total = 0;
+    size_t total = 0, looks = 0;
     for (size_t e = 0; e < count; ++e) {
         if (!valid_effect(&effects[e])) return 0;
         size_t steps = effects[e].kind == FINISH_LOOK ? FINISH_LOOK_STEPS : 1;
         if (total > SIZE_MAX / sizeof(FinishEffectSettings) - steps) return 0;
         total += steps;
+        looks += effects[e].kind == FINISH_LOOK;
     }
-    if (total == count)
+    if (!looks)
         return apply_stack(rgba, width, height, stride, full_width, full_height, offset_x, offset_y, effects, count);
     FinishEffectSettings *flat = malloc(total * sizeof *flat);
     if (!flat) return 0;
-    size_t n = 0;
-    for (size_t e = 0; e < count; ++e) {
-        if (effects[e].kind == FINISH_LOOK) n += expand_look(&effects[e], flat + n);
-        else flat[n++] = effects[e];
-    }
+    size_t n = finish_expand_stack(effects, count, flat, total);
     int done = apply_stack(rgba, width, height, stride, full_width, full_height, offset_x, offset_y, flat, n);
     free(flat);
     return done;

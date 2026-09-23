@@ -258,11 +258,31 @@ int main(void) {
         assert(finish_effect_reach(&preview)<finish_effect_reach(&full));
         assert(finish_effect_reach(&preview)>0);
     }
+    {   // The expansion is what the stack really runs: applying it one effect at a time, each with its own
+        // reach, must land on the same pixels as one call — that is what a caller splitting the work needs.
+        fixture();
+        for (int y=0;y<H;++y) for (int x=0;x<W;++x) original[y*STRIDE+x*4+3]=255;
+        FinishEffectSettings stack[]={{0,1,.3f,.5f,.2f,6,0,0,0,0,0,0,1},
+                                      {15,1,.5f,.5f,.5f,5,0,0,0,0,0,4,1},
+                                      {6,0,0,0,0,1,0,0,0,0,0,0,1}};
+        FinishEffectSettings steps[32];
+        size_t made = finish_expand_stack(stack,3,steps,32);
+        assert(made>1 && made<=1+9);
+        assert(finish_expand_stack(stack,3,steps,2)==0);
+        for (size_t i=0;i<made;++i) assert(steps[i].kind!=15 && steps[i].amount>0);
+        memcpy(output,original,sizeof(output));
+        assert(finish_apply_stack(output,W,H,STRIDE,W,H,0,0,stack,3));
+        static unsigned char stepwise[H*STRIDE];
+        memcpy(stepwise,original,sizeof(stepwise));
+        for (size_t i=0;i<made;++i)
+            assert(finish_apply_stack(stepwise,W,H,STRIDE,W,H,0,0,&steps[i],1));
+        assert(memcmp(stepwise,output,sizeof(output))==0);
+    }
     // An unknown kind and a malformed scale are refused, and neither reaches anywhere.
     FinishEffectSettings unknown={16,1,0,0,0,1,0,0,0,0,0,0,1}, bad_scale={15,1,0,0,0,1,0,0,0,0,0,0,NAN};
     assert(finish_effect_reach(&unknown)==0 && finish_effect_reach(&bad_scale)==0);
     assert(!finish_apply_stack(pixel,1,1,4,1,1,0,0,&unknown,1));
     assert(!finish_apply_stack(pixel,1,1,4,1,1,0,0,&bad_scale,1));
     assert(finish_effect_reach(NULL)==0);
-    puts("Render Finish: all 16 effects, identity, alpha, stride, tone isolation, signed contrast, five modes, protection, transparent lens edges, crop consistency, grain coordinates, split tone, graduated filter, film response, the cinematic look's chain, reach and atomic input validation passed.");
+    puts("Render Finish: all 16 effects, identity, alpha, stride, tone isolation, signed contrast, five modes, protection, transparent lens edges, crop consistency, grain coordinates, split tone, graduated filter, film response, the cinematic look's chain, reach, stepwise expansion and atomic input validation passed.");
 }

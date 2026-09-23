@@ -90,7 +90,7 @@ def module(name, debug):
         "-std=c11", "-Wall", "-Wextra",
         "-sMODULARIZE=1", "-sEXPORT_NAME=createDarkroom", "-sENVIRONMENT=web,worker",
         "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=64MB", "-sSTACK_SIZE=1MB",
-        "-sEXPORTED_FUNCTIONS=_dk_apply,_dk_reach,_dk_is_opaque,_dk_premultiply,_dk_unpremultiply,_malloc,_free",
+        "-sEXPORTED_FUNCTIONS=_dk_apply,_dk_expand,_dk_reach,_dk_is_opaque,_dk_premultiply,_dk_unpremultiply,_malloc,_free",
         "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32",
         "-o", str(OUT / name),
     ], check=True)

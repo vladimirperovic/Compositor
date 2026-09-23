@@ -49,40 +49,162 @@ function activeStack(scale) {
   return { values: new Float32Array(values), count };
 }
 
-// The filters themselves live in a worker; this page only sends it pixels and settings.
-let worker = null;
-let threads = false;
-let nextJob = 1;
-const pending = new Map();
+// The filters live in workers, one per core. An image is cut into horizontal bands and each worker takes
+// one; because the core can process a region of a larger image — and says through dk_reach how many rows
+// of neighbours a band needs to come out identical to the whole — the bands can simply be sewn back
+// together. This is how the page uses every core without shared memory or cross-origin isolation.
+const POOL_SIZE = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) - 1));
 
-function startWorker() {
-  worker = new Worker(new URL('./worker.js?v=%%V%%', import.meta.url));
-  worker.addEventListener('message', event => {
-    const { id, ok, buffer, error, hello } = event.data;
-    if (hello) { threads = event.data.threads; return; }
-    const job = pending.get(id);
-    if (!job) return;
-    pending.delete(id);
-    if (ok) job.resolve(new Uint8ClampedArray(buffer));
-    else job.reject(new Error(error));
-  });
-  worker.addEventListener('error', () => {
-    for (const job of pending.values()) job.reject(new Error('The filters stopped unexpectedly.'));
-    pending.clear();
-  });
+const pool = [];
+let nextJob = 1;
+let nextWorker = 0;
+const pending = new Map();
+const reaches = new Map();   // margin per stack, so the same stack is only asked about once
+
+function startWorkers() {
+  for (let i = 0; i < POOL_SIZE; i += 1) {
+    const worker = new Worker(new URL('./worker.js?v=%%V%%', import.meta.url));
+    worker.addEventListener('message', event => {
+      const { id, ok, hello } = event.data;
+      if (hello) return;
+      const job = pending.get(id);
+      if (!job) return;
+      pending.delete(id);
+      if (ok) job.resolve(event.data);
+      else job.reject(new Error(event.data.error));
+    });
+    worker.addEventListener('error', () => {
+      for (const job of pending.values()) job.reject(new Error('The filters stopped unexpectedly.'));
+      pending.clear();
+    });
+    pool.push(worker);
+  }
 }
 
-/// Runs the active filters over a copy of `data`, in the processor's premultiplied pixels.
-function process(data, width, height, scale) {
-  const { values, count } = activeStack(scale);
-  if (!count) return Promise.resolve(data);
-  const copy = new Uint8ClampedArray(data);   // the worker takes ownership of whatever it is sent
+function ask(worker, message, transfer = []) {
   const id = nextJob += 1;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    worker.postMessage({ id, buffer: copy.buffer, width, height, scale, values, opaque: state.opaque },
-                       [copy.buffer]);
+    worker.postMessage({ ...message, id }, transfer);
   });
+}
+
+const stacks = new Map();   // stack signature → the steps it really runs, and each step's reach
+
+async function stagesFor(values) {
+  const key = String(values);
+  if (!stacks.has(key)) stacks.set(key, await ask(pool[0], { op: 'expand', values }));
+  return stacks.get(key);
+}
+
+/// How to cut the image up for one step. A band carries `margin` extra rows above and below, so what a
+/// core saves is h / (h/n + 2·margin) — still worth it with a wide margin, as long as a band is not
+/// mostly overlap.
+function planBands(height, margin) {
+  const room = Math.max(1, Math.floor(height / 48));
+  const overlapBound = Math.max(1, Math.floor((3 * height) / Math.max(1, 2 * margin)));
+  const count = Math.max(1, Math.min(pool.length, room, overlapBound));
+  const bands = [];
+  for (let i = 0; i < count; i += 1) {
+    bands.push({ from: Math.round((height * i) / count), to: Math.round((height * (i + 1)) / count) });
+  }
+  return bands;
+}
+
+/// One step of the stack, spread across the pool.
+async function applyStage(data, width, height, values, margin) {
+  const bands = planBands(height, margin);
+  const common = { op: 'apply', width, fullWidth: width, fullHeight: height, offsetX: 0, values,
+                   opaque: state.opaque };
+
+  if (bands.length === 1) {
+    const copy = new Uint8ClampedArray(data);   // a worker takes ownership of whatever it is sent
+    const done = await ask(pool[0], { ...common, buffer: copy.buffer, height, offsetY: 0 }, [copy.buffer]);
+    return new Uint8ClampedArray(done.buffer);
+  }
+
+  const row = width * 4;
+  const jobs = bands.map((band, index) => {
+    const top = Math.max(0, band.from - margin);
+    const bottom = Math.min(height, band.to + margin);
+    const slice = data.slice(top * row, bottom * row);
+    return ask(pool[index % pool.length],
+               { ...common, buffer: slice.buffer, height: bottom - top, offsetY: top },
+               [slice.buffer]);
+  });
+
+  const output = new Uint8ClampedArray(width * height * 4);
+  const results = await Promise.all(jobs);
+  results.forEach((done, index) => {
+    const band = bands[index];
+    const top = Math.max(0, band.from - margin);
+    const processed = new Uint8ClampedArray(done.buffer);
+    output.set(processed.subarray((band.from - top) * row, (band.to - top) * row), band.from * row);
+  });
+  return output;
+}
+
+// What each step produced, for the screen-sized preview and for the half-size draft a moving slider gets.
+// Changing one filter then starts from the step before it instead of redoing the stack — the same trick
+// the desktop app plays. Two images are kept (preview and draft) within a budget; once it is spent, the
+// later steps are simply not remembered, which still leaves the expensive early ones cached.
+const CACHE_BUDGET = Math.min(96, Math.max(24, (navigator.deviceMemory || 4) * 12)) << 20;
+const caches = new Map();
+
+function cacheFor(token) {
+  if (!caches.has(token)) {
+    caches.set(token, { keys: [], images: [] });
+    for (const old of [...caches.keys()].slice(0, -2)) caches.delete(old);
+  }
+  return caches.get(token);
+}
+
+// What the last render cost, for looking into speed without a profiler.
+const report_timing = timing => { window.__darkroom = { pool: pool.length, ...timing }; };
+
+/// Runs the active filters over `data`, in the processor's premultiplied pixels, one step at a time.
+/// `keep` names an image whose steps are worth remembering (the preview); a one-off render leaves it out.
+async function process(data, width, height, scale, keep = null) {
+  const { values, count } = activeStack(scale);
+  if (!count) return data;
+  const { steps, reaches } = await stagesFor(values);
+  const total = reaches.length;
+  const token = keep ? `${keep}|${width}x${height}|${state.seed}` : null;
+
+  const keys = [];
+  let running = '';
+  for (let i = 0; i < total; i += 1) {
+    running += '|' + steps.subarray(i * 13, (i + 1) * 13).join(',');
+    keys.push(running);
+  }
+
+  const kept = token ? cacheFor(token) : null;
+  let from = 0;
+  let current = data;
+  let stored = 0;
+  if (kept) {
+    while (from < total && kept.keys[from] === keys[from] && kept.images[from]) {
+      current = kept.images[from];
+      stored += current.length;
+      from += 1;
+    }
+  }
+
+  const started = performance.now();
+  for (let i = from; i < total; i += 1) {
+    current = await applyStage(current, width, height, steps.subarray(i * 13, (i + 1) * 13), reaches[i]);
+    if (!kept) continue;
+    const room = stored + current.length <= CACHE_BUDGET;
+    kept.keys[i] = room ? keys[i] : null;
+    kept.images[i] = room ? current : null;
+    if (room) stored += current.length;
+  }
+  if (kept) {
+    kept.keys.length = total;
+    kept.images.length = total;
+  }
+  report_timing({ steps: total, reused: from, ms: +(performance.now() - started).toFixed(1) });
+  return current;
 }
 
 const isOpaque = data => {
@@ -152,6 +274,7 @@ function buildPreview() {
   }
   state.preview = paint.getImageData(0, 0, w, h);
   state.previewScale = w / width;
+  state.previewToken = (state.previewToken || 0) + 1;
 
   // A half-size copy carries the image while a slider is moving: four times fewer pixels to filter,
   // and the full preview comes back the moment the slider is let go.
@@ -239,7 +362,8 @@ async function run() {
     } else {
       const image = state.quick && state.draft ? state.draft : state.preview;
       const scale = image === state.draft ? state.draftScale : state.previewScale;
-      const data = await process(image.data, image.width, image.height, scale);
+      const data = await process(image.data, image.width, image.height, scale,
+                                 `preview${state.previewToken}${image === state.draft ? '-draft' : ''}`);
       show(data, image.width, image.height);
     }
     report(performance.now() - started);
@@ -479,10 +603,7 @@ function wire() {
   el('open').addEventListener('click', () => el('file').click());
   el('hide')?.addEventListener('click', () => { document.body.classList.add('panel-hidden'); paint(); });
   el('file').addEventListener('change', event => open(event.target.files[0]));
-  el('example').addEventListener('click', async () => {
-    const response = await fetch('sample.jpg?v=%%V%%');
-    open(new File([await response.blob()], 'example.jpg', { type: 'image/jpeg' }));
-  });
+  el('example').addEventListener('click', loadExample);
 
   const stage = el('stage');
   stage.addEventListener('dragover', event => { event.preventDefault(); stage.classList.add('dragging'); });
@@ -509,6 +630,12 @@ function wire() {
   };
   addEventListener('keydown', event => { if (event.key === 'b' && !event.repeat) hold(true); });
   addEventListener('keyup', event => { if (event.key === 'b') hold(false); });
+
+  // A double click puts the panels away, and brings them back.
+  canvas.addEventListener('dblclick', () => {
+    document.body.classList.toggle('panel-hidden');
+    paint();
+  });
 
   // On the image itself: the divider is a handle, everywhere else is press-and-hold for the original.
   let dragging = false;
@@ -580,50 +707,101 @@ function wire() {
   measureChrome();
 }
 
+const HANDLES = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
+
 function wireCrop() {
   const overlay = el('cropOverlay');
   const rect = el('cropRect');
-  let start = null;
+  let box = null;     // the crop, in the overlay's own pixels
+  let drag = null;
+
+  // The frame: a dashed rectangle with a square at each corner and side, and thirds drawn inside it.
+  for (const line of ['v1', 'v2', 'h1', 'h2']) {
+    const guide = document.createElement('div');
+    guide.className = `third ${line[0]}`;
+    guide.style[line[0] === 'v' ? 'left' : 'top'] = line[1] === '1' ? '33.333%' : '66.666%';
+    rect.append(guide);
+  }
+  for (const corner of HANDLES) {
+    const handle = document.createElement('div');
+    handle.className = `crop-handle ${corner}`;
+    handle.dataset.handle = corner;
+    rect.append(handle);
+  }
+
+  const place = () => {
+    Object.assign(rect.style, {
+      display: 'block', left: `${box.x}px`, top: `${box.y}px`,
+      width: `${box.w}px`, height: `${box.h}px`,
+    });
+    state.cropRect = { ...box, frame: { width: overlay.clientWidth, height: overlay.clientHeight } };
+  };
+
+  const wholeImage = () => {
+    box = { x: 0, y: 0, w: overlay.clientWidth, h: overlay.clientHeight };
+    place();
+  };
 
   el('cropMode').addEventListener('click', () => {
     state.cropping = !state.cropping;
-    state.cropRect = null;
-    rect.style.display = 'none';
     overlay.hidden = !state.cropping;
     el('cropActions').hidden = !state.cropping;
     el('cropMode').classList.toggle('active', state.cropping);
+    if (state.cropping) wholeImage();
+    else { rect.style.display = 'none'; state.cropRect = null; }
   });
 
   overlay.addEventListener('pointerdown', event => {
-    const box = overlay.getBoundingClientRect();
-    start = { x: event.clientX - box.left, y: event.clientY - box.top };
+    const frame = overlay.getBoundingClientRect();
+    const at = { x: event.clientX - frame.left, y: event.clientY - frame.top };
+    const handle = event.target.dataset ? event.target.dataset.handle : null;
+    const inside = at.x >= box.x && at.x <= box.x + box.w && at.y >= box.y && at.y <= box.y + box.h;
+    drag = { at, from: { ...box }, handle, mode: handle ? 'resize' : inside ? 'move' : 'draw' };
+    if (drag.mode === 'draw') { box = { x: at.x, y: at.y, w: 0, h: 0 }; place(); }
     overlay.setPointerCapture(event.pointerId);
+    event.preventDefault();
   });
 
   overlay.addEventListener('pointermove', event => {
-    if (!start) return;
-    const box = overlay.getBoundingClientRect();
-    const x = Math.min(Math.max(0, event.clientX - box.left), box.width);
-    const y = Math.min(Math.max(0, event.clientY - box.top), box.height);
-    const left = Math.min(start.x, x), top = Math.min(start.y, y);
-    const width = Math.abs(x - start.x), height = Math.abs(y - start.y);
-    Object.assign(rect.style, { display: 'block', left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
-    state.cropRect = { left, top, width, height, box: { width: box.width, height: box.height } };
+    if (!drag) return;
+    const frame = overlay.getBoundingClientRect();
+    const x = Math.min(Math.max(0, event.clientX - frame.left), frame.width);
+    const y = Math.min(Math.max(0, event.clientY - frame.top), frame.height);
+
+    if (drag.mode === 'move') {
+      box.x = Math.min(Math.max(0, drag.from.x + x - drag.at.x), frame.width - drag.from.w);
+      box.y = Math.min(Math.max(0, drag.from.y + y - drag.at.y), frame.height - drag.from.h);
+    } else if (drag.mode === 'draw') {
+      box = { x: Math.min(drag.at.x, x), y: Math.min(drag.at.y, y),
+              w: Math.abs(x - drag.at.x), h: Math.abs(y - drag.at.y) };
+    } else {
+      // Each letter in the handle's name moves that edge; the opposite ones stay where they are.
+      const edges = { left: drag.from.x, top: drag.from.y,
+                      right: drag.from.x + drag.from.w, bottom: drag.from.y + drag.from.h };
+      if (drag.handle.includes('w')) edges.left = Math.min(x, edges.right - 16);
+      if (drag.handle.includes('e')) edges.right = Math.max(x, edges.left + 16);
+      if (drag.handle.includes('n')) edges.top = Math.min(y, edges.bottom - 16);
+      if (drag.handle.includes('s')) edges.bottom = Math.max(y, edges.top + 16);
+      box = { x: edges.left, y: edges.top, w: edges.right - edges.left, h: edges.bottom - edges.top };
+    }
+    place();
   });
 
-  overlay.addEventListener('pointerup', () => { start = null; });
+  for (const event of ['pointerup', 'pointercancel']) overlay.addEventListener(event, () => { drag = null; });
 
   el('cropCancel').addEventListener('click', () => el('cropMode').click());
   el('cropApply').addEventListener('click', () => {
     const chosen = state.cropRect;
-    if (!chosen || chosen.width < 8 || chosen.height < 8) return;
-    const scale = state.source.width / chosen.box.width;
+    if (!chosen || chosen.w < 8 || chosen.h < 8) return;
+    const scale = state.source.width / chosen.frame.width;
     const crop = {
-      x: Math.round(chosen.left * scale),
-      y: Math.round(chosen.top * scale),
-      w: Math.round(chosen.width * scale),
-      h: Math.round(chosen.height * scale),
+      x: Math.round(chosen.x * scale),
+      y: Math.round(chosen.y * scale),
+      w: Math.round(chosen.w * scale),
+      h: Math.round(chosen.h * scale),
     };
+    crop.x = Math.max(0, Math.min(crop.x, state.source.width - 1));
+    crop.y = Math.max(0, Math.min(crop.y, state.source.height - 1));
     crop.w = Math.max(1, Math.min(crop.w, state.source.width - crop.x));
     crop.h = Math.max(1, Math.min(crop.h, state.source.height - crop.y));
     el('cropMode').click();
@@ -631,14 +809,25 @@ function wireCrop() {
   });
 }
 
+/// The studio's own render, so the page opens with something to work on.
+async function loadExample() {
+  try {
+    const response = await fetch('sample.jpg?v=%%V%%');
+    if (response.ok) await open(new File([await response.blob()], 'example.jpg', { type: 'image/jpeg' }));
+  } catch (error) {
+    report(0, 'The example image could not be loaded — open one of your own.');
+  }
+}
+
 function start() {
-  startWorker();
+  startWorkers();
   buildPresets();
   buildFilterList();
   refreshPanel();
   wire();
   for (const id of ['compare', 'cropMode', 'zoom', 'save', 'reset']) el(id).disabled = true;
   el('status').textContent = 'Ready — open an image to begin.';
+  loadExample();
 }
 
 start();

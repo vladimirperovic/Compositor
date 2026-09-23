@@ -22,6 +22,34 @@ static void dk_read(const float *values, FinishEffectSettings *effect) {
     effect->scale = values[12];
 }
 
+static void dk_write(float *values, const FinishEffectSettings *effect) {
+    values[0] = (float)effect->kind;
+    values[1] = effect->amount;
+    values[2] = effect->shadows;
+    values[3] = effect->midtones;
+    values[4] = effect->highlights;
+    values[5] = effect->radius;
+    values[6] = effect->saturation;
+    values[7] = (float)effect->palette;
+    values[8] = (float)effect->contrast_type;
+    values[9] = effect->protect_shadows;
+    values[10] = effect->protect_highlights;
+    values[11] = (float)effect->seed;
+    values[12] = effect->scale;
+}
+
+// The stack as the processor will really run it, so the page can run it a step at a time: cache what each
+// step produced, and spread each step over as many workers as the machine has cores.
+int dk_expand(const float *values, int count, float *out, int capacity) {
+    if (!values || !out || count < 0 || count > DK_MAX_EFFECTS || capacity < 0) return 0;
+    FinishEffectSettings effects[DK_MAX_EFFECTS], expanded[DK_MAX_EFFECTS * 9];
+    for (int e = 0; e < count; ++e) dk_read(values + (size_t)e * DK_SLOTS, &effects[e]);
+    size_t made = finish_expand_stack(effects, (size_t)count, expanded, sizeof expanded / sizeof *expanded);
+    if (!made || made > (size_t)capacity) return 0;
+    for (size_t e = 0; e < made; ++e) dk_write(out + e * DK_SLOTS, &expanded[e]);
+    return (int)made;
+}
+
 int dk_apply(uint8_t *rgba, int width, int height, int full_width, int full_height,
              int offset_x, int offset_y, const float *values, int count) {
     if (!values || count < 0 || count > DK_MAX_EFFECTS || width <= 0 || height <= 0) return 0;
