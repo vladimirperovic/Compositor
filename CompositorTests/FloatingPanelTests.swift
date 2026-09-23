@@ -61,7 +61,7 @@ struct FloatingPanelTests {
         switch kind {
         case .levels: controller.show(title: "Levels", content: LevelsSheet(session: session))
         case .hsv: controller.show(title: "Hue/Saturation", content: HueSaturationSheet(session: session))
-        case .curves, .exposure, .gradientMap, .grain, .blackWhite, .colorBalance:
+        case .curves, .exposure, .gradientMap, .grain, .blackWhite, .colorBalance, .gaussianBlur, .motionBlur, .addNoise:
             controller.show(title: kind.rawValue, content: FilterSheet(session: session))
         case .invert: return   // filtered out above: no editor, so no panel to test
         }
@@ -75,6 +75,73 @@ struct FloatingPanelTests {
         panel.performClose(nil)
         #expect(session.adjustmentEditingID == nil)
         #expect(session.levels == nil && session.hueSaturation == nil && session.filterEdit == nil)
+    }
+
+    /// Camera Raw docks to the document window. That frame must not become the place
+    /// Gaussian Blur and the other filters reopen.
+    @Test func dockedPlacementLeavesTheSavedFilterPosition() throws {
+        let controller = FloatingPanelController(name: "testDockedFilterPosition")
+        controller.show(title: "Gaussian Blur", content: Text("Blur"))
+        settle()
+        let panel = try #require(NSApp.windows.first { $0.identifier == controller.identifier })
+        let parked = NSPoint(x: 40, y: 240)
+        panel.setFrameOrigin(parked)
+        let saved = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        controller.close()
+
+        controller.show(title: "Camera Raw Filter", content: Text("Camera Raw").frame(maxWidth: .infinity, maxHeight: .infinity), placement: .dockedToMainWindowRight)
+        settle()
+        #expect(panel.isVisible)
+        let document = try #require(NSApp.windows.first { $0 !== panel && $0.isVisible && !($0 is NSPanel) })
+        #expect(abs(panel.frame.maxX - document.frame.maxX) < 2)
+        controller.close()
+
+        controller.show(title: "Gaussian Blur", content: Text("Blur"))
+        settle()
+        let restored = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        #expect(abs(restored.x - saved.x) < 2 && abs(restored.y - saved.y) < 2,
+                "the filter panel reopens where it was left, not on the right edge: \(restored)")
+        controller.close()
+    }
+
+    /// The docked panel has to be wide enough for the widest thing it holds. Camera Raw's three
+    /// grading wheels sit side by side and overflowed a 440pt panel, which showed as controls
+    /// running past its edge — nothing warns about that, so the sizes are compared here instead.
+    @Test func theDockedPanelFitsTheGradingWheels() throws {
+        let session = EditorSession()
+        session.createDocument(width: 64, height: 64)
+        let grading = NSHostingView(rootView: AnyView(CameraRawGradingControls(session: session).roundedControls()))
+        // The sheet pads 24 on each side, and the colour section is inset another 18.
+        let available = FloatingPanelController.dockedWidth - 48 - 18
+        #expect(grading.fittingSize.width <= available,
+                "grading needs \(grading.fittingSize.width), the panel leaves \(available)")
+    }
+
+    /// Camera Raw docks to the document window's right edge, at its full height, and follows it.
+    ///
+    /// The window it docks to is whichever one the app has, not one this test makes: the test host
+    /// is Compositor itself, so its own editor window is main throughout. An earlier version of
+    /// this test built its own window, which the panel quite correctly ignored — and the two
+    /// windows together took the test host down.
+    @Test func cameraRawDocksToTheDocumentWindow() throws {
+        let controller = FloatingPanelController(name: "testCameraRawOpensRight")
+        controller.show(title: "Camera Raw Filter", content: Text("Camera Raw").frame(maxWidth: .infinity, maxHeight: .infinity),
+                        placement: .dockedToMainWindowRight)
+        settle()
+        let panel = try #require(NSApp.windows.first { $0.identifier == controller.identifier })
+        let document = try #require(NSApp.windows.first { $0 !== panel && $0.isVisible && !($0 is NSPanel) })
+        #expect(abs(panel.frame.maxX - document.frame.maxX) < 2, "on the right edge: \(panel.frame) vs \(document.frame)")
+        #expect(abs(panel.frame.height - document.frame.height) < 2, "full height: \(panel.frame) vs \(document.frame)")
+
+        // A drag posts a move rather than a resize; the panel has to follow both.
+        document.setFrameOrigin(NSPoint(x: document.frame.origin.x + 40, y: document.frame.origin.y + 30))
+        settle()
+        #expect(abs(panel.frame.maxX - document.frame.maxX) < 2, "follows a move: \(panel.frame) vs \(document.frame)")
+        document.setFrame(NSRect(x: document.frame.minX, y: document.frame.minY,
+                                 width: document.frame.width, height: document.frame.height - 60), display: true)
+        settle()
+        #expect(abs(panel.frame.height - document.frame.height) < 2, "follows a resize: \(panel.frame) vs \(document.frame)")
+        controller.close()
     }
 
 }

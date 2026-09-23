@@ -86,9 +86,15 @@ struct CompositorApp: App {
                     CommandGroup(after: .toolbar) {
                         Button("Fit Canvas") { session.fit() }.configuredKeyboardShortcut("0").disabled(session.document == nil)
                         Button("Actual Pixels") { session.zoom(to: 1) }.configuredKeyboardShortcut("1").disabled(session.document == nil)
-                        Button("Zoom In") { session.zoom(to: session.viewport.zoom * 1.25) }
+                        Button("Zoom In") {
+                            guard !(NSApp.keyWindow?.firstResponder is NSText) else { return }
+                            session.zoomKeyboard(by: 1)
+                        }
                             .configuredKeyboardShortcut("=").disabled(session.document == nil)
-                        Button("Zoom Out") { session.zoom(to: session.viewport.zoom / 1.25) }
+                        Button("Zoom Out") {
+                            guard !(NSApp.keyWindow?.firstResponder is NSText) else { return }
+                            session.zoomKeyboard(by: -1)
+                        }
                             .configuredKeyboardShortcut("-").disabled(session.document == nil)
                         Toggle("Pixel Grid (800% and above)", isOn: Binding(get: { session.showsPixelGrid },
                                                                               set: { session.showsPixelGrid = $0 }))
@@ -150,7 +156,7 @@ struct CompositorApp: App {
                         .configuredKeyboardShortcut("x")
                     Button("Copy") {
                         if NSApp.keyWindow?.firstResponder is NSTextView { NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil) }
-                        else if session.canCopyPixels { session.copySelection() }
+                        else if session.canCopyPixels || session.canCopyLayer { session.copySelection() }
                         else { NSSound.beep() }
                     }
                         .configuredKeyboardShortcut("c")
@@ -158,6 +164,7 @@ struct CompositorApp: App {
                         .configuredKeyboardShortcut("c", modifiers: [.command, .shift]).disabled(!session.canCopyMerged)
                     Button("Paste") {
                         if NSApp.keyWindow?.firstResponder is NSTextView { NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil) }
+                        else if applicationDelegate.workspace.pasteCopiedLayer() { }
                         else if session.canPaste { session.paste() }
                         else { NSSound.beep() }
                     }
@@ -241,6 +248,8 @@ struct CompositorApp: App {
                         .disabled(session.document == nil || !applicationDelegate.projects.canStart)
                     Button("Image Size…") { Task { await applicationDelegate.projects.imageSize() } }
                         .configuredKeyboardShortcut("i", modifiers: [.command, .option])
+                        .disabled(session.document == nil || !applicationDelegate.projects.canStart)
+                    Button("Trim…") { Task { await applicationDelegate.projects.trim() } }
                         .disabled(session.document == nil || !applicationDelegate.projects.canStart)
                     Button("Enlarger…") { Task { await applicationDelegate.projects.aiUpscale() } }
                         .disabled(!session.canAIUpscale || !applicationDelegate.projects.canStart)

@@ -151,7 +151,9 @@ extension EditorSession {
         case "Original": return document.map { CGFloat($0.width) / CGFloat($0.height) }
         case "1:1": return 1
         case "4:3": return 4 / 3
+        case "3:4": return 3 / 4
         case "16:9": return 16 / 9
+        case "9:16": return 9 / 16
         default: return nil
         }
     }
