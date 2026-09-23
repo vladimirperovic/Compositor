@@ -7,7 +7,7 @@ struct RenderFinishWorkspace: View {
     @Bindable var session: EditorSession
     @State private var selected: FinishEffect = .tonalContrast
     private var edit: FilterEdit? { session.filterEdit }
-    private var enlargeFactor: Int { edit?.enlargeFactor ?? 0 }
+    private var enlargeFactor: Int { edit?.darkroom.enlargeFactor ?? 0 }
     private var settings: Binding<RenderFinishSettings> {
         Binding(get: { edit?.settings.renderFinish ?? RenderFinishSettings() }, set: { new in
             guard var value = edit?.settings else { return }
@@ -82,11 +82,11 @@ struct RenderFinishWorkspace: View {
                             set: { settings.wrappedValue[selected].enabled = $0 }))
                         Divider()
                         RenderFinishControls(settings: settings, selected: selected)
-                        if edit?.comparisonMode == .split {
+                        if edit?.darkroom.comparisonMode == .split {
                             Divider()
                             Text("Before / After divider").font(.callout.weight(.medium))
-                            Slider(value: Binding(get: { edit?.splitPosition ?? 0.5 }, set: {
-                                edit?.splitPosition = $0
+                            Slider(value: Binding(get: { edit?.darkroom.splitPosition ?? 0.5 }, set: {
+                                edit?.darkroom.splitPosition = $0
                                 session.brushRevision += 1
                             }), in: 0...1)
                             .accessibilityLabel("Before and after divider")

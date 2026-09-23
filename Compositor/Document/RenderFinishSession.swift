@@ -25,8 +25,30 @@ nonisolated struct FinishDetail: @unchecked Sendable {
     let transform: LayerTransform
 }
 
+/// Everything a Darkroom edit adds to an upstream FilterEdit, in one object, so FilterEdit carries a single line
+/// of ours and upstream's own additions there never collide with it.
+@Observable
+final class DarkroomEdit {
+    var comparisonMode: FinishComparisonMode = .split
+    var showingOriginal = false
+    /// nil = manual zoom, false = Fit, true = Fill.
+    var comparisonFill: Bool? = false
+    var splitPosition: Double = 0.5
+    /// Darkroom on the merged visible canvas: the document's layers when it began, so Apply can tell they are
+    /// unchanged. The edit's layer is then a stand-in holding the composite, not a layer of the document.
+    var mergedLayers: [ImageLayer]? = nil
+    /// The Enlarger step: 0 off, else the factor the canvas is enlarged by after Apply.
+    var enlargeFactor = 0
+    /// Zoomed in: the part on screen at full resolution, and the request being rendered.
+    @ObservationIgnored var detail: FinishDetail?
+    @ObservationIgnored var detailPending: FinishDetail.Request?
+    @ObservationIgnored var detailTask: Task<Void, Never>?
+    /// The preview's per-effect outputs.
+    let stages = FinishStageCache()
+}
+
 extension FilterEdit {
-    var finishSource: FinishSource { mergedLayers == nil ? .layer : .mergedVisible }
+    var finishSource: FinishSource { darkroom.mergedLayers == nil ? .layer : .mergedVisible }
 }
 
 nonisolated extension LayerEffects {
@@ -95,10 +117,10 @@ extension EditorSession {
         catch { brushError = error.localizedDescription; next = nil }
         guard let next else { filterEdit = edit; NSSound.beep(); return }
         edit.previewTask?.cancel()
-        edit.finishDetailTask?.cancel()
-        next.comparisonMode = edit.comparisonMode
-        next.splitPosition = edit.splitPosition
-        next.comparisonFill = edit.comparisonFill
+        edit.darkroom.detailTask?.cancel()
+        next.darkroom.comparisonMode = edit.darkroom.comparisonMode
+        next.darkroom.splitPosition = edit.darkroom.splitPosition
+        next.darkroom.comparisonFill = edit.darkroom.comparisonFill
         filterEdit = next
         updateFilter(next.settings, preview: edit.preview)
     }
@@ -120,13 +142,13 @@ extension EditorSession {
         let canvas = ImageLayer(id: UUID(), asset: asset, name: FinishSource.mergedVisible.rawValue, isVisible: true,
                                 transform: LayerTransform(origin: .zero, size: document.size))
         let edit = try FilterEdit(kind: .renderFinish, layer: canvas, selection: selection, settings: settings)
-        edit.mergedLayers = document.layers
+        edit.darkroom.mergedLayers = document.layers
         return edit
     }
 
     /// Darkroom's Apply, from its button and the canvas's Return key alike.
     func applyDarkroom() async {
-        let factor = filterEdit?.enlargeFactor ?? 0
+        let factor = filterEdit?.darkroom.enlargeFactor ?? 0
         await commitFilter()
         // Enlarger, when it is the last step, runs on the finished document with its own progress and undo step.
         if factor > 1, filterEdit == nil, brushError == nil { Self.enlargeAfterDarkroom?(self, factor) }
@@ -139,7 +161,7 @@ extension EditorSession {
         let active = edit.settings.renderFinish.activeEffects
         let suffix = active.count == 1 ? active[0].title : FilterKind.renderFinish.rawValue
         let result: ImageLayer
-        if let merged = edit.mergedLayers {
+        if let merged = edit.darkroom.mergedLayers {
             guard layers == merged else { throw RenderFinishError.documentChanged }
             result = ImageLayer(id: UUID(), asset: asset, name: "\(FinishSource.mergedVisible.rawValue) · \(suffix)",
                                 isVisible: true, transform: transform)
@@ -174,15 +196,15 @@ extension EditorSession {
     func requestFinishDetail(_ visible: CGRect?, redraw: @escaping @MainActor () -> Void) {
         guard let edit = filterEdit, edit.kind == .renderFinish, !edit.committing else { return }
         guard let visible, !visible.isEmpty, !edit.settings.renderFinish.isIdentity else {
-            edit.finishDetailTask?.cancel()
-            edit.finishDetailTask = nil
-            edit.finishDetailPending = nil
+            edit.darkroom.detailTask?.cancel()
+            edit.darkroom.detailTask = nil
+            edit.darkroom.detailPending = nil
             return
         }
         let settings = edit.settings
-        if let detail = edit.finishDetail, detail.request.settings == settings, detail.request.valid.contains(visible) { return }
-        if let pending = edit.finishDetailPending, pending.settings == settings, pending.valid.contains(visible) { return }
-        edit.finishDetailTask?.cancel()
+        if let detail = edit.darkroom.detail, detail.request.settings == settings, detail.request.valid.contains(visible) { return }
+        if let pending = edit.darkroom.detailPending, pending.settings == settings, pending.valid.contains(visible) { return }
+        edit.darkroom.detailTask?.cancel()
         let source = edit.original.image
         let bounds = CGRect(x: 0, y: 0, width: source.width, height: source.height)
         let reach = CGFloat(settings.renderFinish.reach())
@@ -193,27 +215,27 @@ extension EditorSession {
             valid = visible
             rect = valid.insetBy(dx: -reach, dy: -reach).intersection(bounds).integral
         }
-        guard rect.width * rect.height <= Self.finishDetailLimit else { edit.finishDetailPending = nil; return }
+        guard rect.width * rect.height <= Self.finishDetailLimit else { edit.darkroom.detailPending = nil; return }
         let request = FinishDetail.Request(valid: valid, settings: settings)
-        edit.finishDetailPending = request
+        edit.darkroom.detailPending = request
         let selection = edit.selection, seed = edit.seed
         let mapping = CGAffineTransform(translationX: rect.minX, y: rect.minY).concatenating(edit.mapping)
         let region = FinishRegion(x: Int(rect.minX), y: Int(rect.minY), fullWidth: source.width, fullHeight: source.height)
         let transform = PixelFilter.placement(of: rect, in: edit.transform, width: source.width, height: source.height)
-        edit.finishDetailTask = Task { @MainActor [weak edit] in
+        edit.darkroom.detailTask = Task { @MainActor [weak edit] in
             // Wait for the view and sliders to settle; the preview keeps up in the meantime.
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            guard let crop = source.cropping(to: rect) else { edit?.finishDetailPending = nil; return }
+            guard let crop = source.cropping(to: rect) else { edit?.darkroom.detailPending = nil; return }
             let job = FilterJob(kind: .renderFinish, image: crop, settings: settings, scale: 1, selection: selection,
                                 mapping: mapping, seed: seed, finishRegion: region)
             let image = await Task.detached(priority: .userInitiated) { try? PixelFilter.run(job) }.value
-            guard let edit, !Task.isCancelled, edit.finishDetailPending == request else { return }
-            edit.finishDetailPending = nil
-            edit.finishDetailTask = nil
+            guard let edit, !Task.isCancelled, edit.darkroom.detailPending == request else { return }
+            edit.darkroom.detailPending = nil
+            edit.darkroom.detailTask = nil
             // A failed render is retried the next time the canvas draws for another reason.
             guard let image else { return }
-            edit.finishDetail = FinishDetail(request: request, image: image, transform: transform)
+            edit.darkroom.detail = FinishDetail(request: request, image: image, transform: transform)
             redraw()
         }
     }

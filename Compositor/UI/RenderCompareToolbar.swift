@@ -15,22 +15,22 @@ struct RenderCompareToolbar: View {
     var body: some View {
         HStack(spacing: 10) {
             Text("Compare").foregroundStyle(.secondary)
-            Picker("Compare mode", selection: Binding(get: { edit?.comparisonMode ?? .split },
+            Picker("Compare mode", selection: Binding(get: { edit?.darkroom.comparisonMode ?? .split },
                 set: { session.setFinishComparison($0) })) {
                 ForEach(FinishComparisonMode.allCases) { mode in
                     Label(mode.rawValue, systemImage: mode.symbol).tag(mode)
                 }
             }.pickerStyle(.segmented).frame(width: 265).labelsHidden()
-            Text(edit?.showingOriginal == true ? "Original" : "Hold Original")
+            Text(edit?.darkroom.showingOriginal == true ? "Original" : "Hold Original")
                 .font(.caption).padding(.horizontal, 9).padding(.vertical, 6)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { _ in if edit?.showingOriginal != true { session.showFinishOriginal(true) } }
+                    .onChanged { _ in if edit?.darkroom.showingOriginal != true { session.showFinishOriginal(true) } }
                     .onEnded { _ in session.showFinishOriginal(false) })
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("Show original temporarily")
-                .accessibilityAction { session.showFinishOriginal(!(edit?.showingOriginal ?? false)) }
+                .accessibilityAction { session.showFinishOriginal(!(edit?.darkroom.showingOriginal ?? false)) }
                 .help("Press and hold to see the original, or press \(Self.beforeAfterKey) to switch between before and after.")
             Divider().frame(height: 18)
             Text("Zoom").foregroundStyle(.secondary)

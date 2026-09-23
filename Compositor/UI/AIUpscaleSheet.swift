@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Enlarger (AI upscaling): the scale, the model (downloaded on request), and the run with its progress.
@@ -123,6 +124,33 @@ struct AIUpscaleSheet: View {
                 running = false
                 self.error = error.localizedDescription
             }
+        }
+    }
+}
+
+extension ProjectController {
+    /// Darkroom hands its Enlarger step over here once Apply has finished.
+    func listenForDarkroomEnlarger() {
+        EditorSession.enlargeAfterDarkroom = { [weak self] session, factor in
+            guard let self, session === self.session else { return }
+            Task { await self.aiUpscale(factor: factor, autoStart: true) }
+        }
+    }
+
+    /// The Enlarger sheet, run to its end.
+    func presentEnlarger(in window: NSWindow, factor: Int, autoStart: Bool) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let sheet = NSWindow()
+            sheet.styleMask = [.titled, .fullSizeContentView]
+            sheet.title = "Enlarger"
+            sheet.contentViewController = NSHostingController(rootView: AIUpscaleSheet(session: session, factor: factor,
+                                                                                       autoStart: autoStart) {
+                window.endSheet(sheet)
+                sheet.orderOut(nil)
+                sheet.contentViewController = nil
+                continuation.resume()
+            })
+            window.beginSheet(sheet)
         }
     }
 }

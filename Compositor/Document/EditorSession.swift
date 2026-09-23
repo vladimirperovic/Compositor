@@ -922,14 +922,7 @@ final class EditorSession {
 
     func zoom(to value: CGFloat, anchor: CGPoint? = nil) {
         guard let document else { return }
-        var anchor = anchor ?? viewport.center
-        if let edit = filterEdit, edit.kind == .renderFinish {
-            edit.comparisonFill = nil
-            if edit.comparisonMode == .sideBySide, anchor != viewport.center {
-                anchor = FinishComparisonGeometry.centeredAnchor(anchor, view: viewport.viewSize, backingScale: viewport.backingScale)
-            }
-        }
-        viewport.setZoom(value, anchoredAt: anchor, documentSize: document.size)
+        viewport.setZoom(value, anchoredAt: darkroomZoomAnchor(anchor ?? viewport.center), documentSize: document.size)
     }
 
     /// Step through stable keyboard zoom levels while keeping the viewport center fixed.

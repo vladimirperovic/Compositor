@@ -58,11 +58,11 @@ struct RenderComparisonTests {
         #expect(session.document == document)
         #expect(session.cropRect == nil)
         view.keyDown(with: try key("\\", code: 42))
-        #expect(session.filterEdit?.showingOriginal == true)
+        #expect(session.filterEdit?.darkroom.showingOriginal == true)
         view.keyDown(with: try key("\\", code: 42, repeated: true))
-        #expect(session.filterEdit?.showingOriginal == true)
+        #expect(session.filterEdit?.darkroom.showingOriginal == true)
         view.keyDown(with: try key("\\", code: 42))
-        #expect(session.filterEdit?.showingOriginal == false)
+        #expect(session.filterEdit?.darkroom.showingOriginal == false)
         view.keyDown(with: try key("\u{1b}", code: 53))
         #expect(session.filterEdit == nil)
         #expect(session.document == document)
@@ -73,13 +73,13 @@ struct RenderComparisonTests {
         let edit = try #require(session.filterEdit)
         func pendingTask() -> Task<Void, Never> { Task { try? await Task.sleep(for: .seconds(30)) } }
         let offTask = pendingTask()
-        edit.finishDetailTask = offTask
-        edit.finishDetailPending = FinishDetail.Request(valid: CGRect(x: 0, y: 0, width: 40, height: 30), settings: edit.settings)
+        edit.darkroom.detailTask = offTask
+        edit.darkroom.detailPending = FinishDetail.Request(valid: CGRect(x: 0, y: 0, width: 40, height: 30), settings: edit.settings)
         session.updateFilter(edit.settings, preview: false)
         #expect(offTask.isCancelled)
-        #expect(edit.finishDetailPending == nil)
+        #expect(edit.darkroom.detailPending == nil)
         let cancelTask = pendingTask()
-        edit.finishDetailTask = cancelTask
+        edit.darkroom.detailTask = cancelTask
         session.cancelFilter()
         #expect(cancelTask.isCancelled)
         #expect(session.filterEdit == nil)

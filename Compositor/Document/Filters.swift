@@ -289,21 +289,8 @@ final class FilterEdit {
     var grownMargin: CGFloat = 0
     var settings: FilterSettings
     var preview = true
-    var comparisonMode: FinishComparisonMode = .split
-    var showingOriginal = false
-    /// nil = manual zoom, false = Fit, true = Fill.
-    var comparisonFill: Bool? = false
-    var splitPosition: Double = 0.5
-    /// Render Finish on the merged visible canvas: the document's layers when it began, so Apply can tell they are
-    /// unchanged. The edit's layer is then a stand-in holding the composite, not a layer of the document.
-    var mergedLayers: [ImageLayer]? = nil
-    /// Render Finish zoomed in: the part on screen at full resolution, and the request being rendered.
-    @ObservationIgnored var finishDetail: FinishDetail?
-    @ObservationIgnored var finishDetailPending: FinishDetail.Request?
-    @ObservationIgnored var finishDetailTask: Task<Void, Never>?
-    let finishStages = FinishStageCache()
-    /// Darkroom's Enlarger step: 0 off, else the factor the canvas is enlarged by after Apply.
-    var enlargeFactor = 0
+    /// Darkroom's state for this edit (see DarkroomEdit).
+    let darkroom = DarkroomEdit()
     var committing = false
     var previewError: String?
     var preparing = false
@@ -519,9 +506,9 @@ extension EditorSession {
         if edit.kind.isAutomatic, edit.preparedPreview != nil, edit.preparedSettings == edit.settings { brushRevision += 1; return }
         guard preview else {
             edit.pending = nil; edit.preparedPreview = nil; brushRevision += 1
-            edit.finishDetailTask?.cancel()
-            edit.finishDetailTask = nil
-            edit.finishDetailPending = nil
+            edit.darkroom.detailTask?.cancel()
+            edit.darkroom.detailTask = nil
+            edit.darkroom.detailPending = nil
             return
         }
         edit.pending = edit.previewJob
@@ -569,8 +556,8 @@ extension EditorSession {
         if finishAdjustmentEditing(commit: false) { return }
         guard let edit = filterEdit, !edit.committing else { return }
         edit.previewTask?.cancel()
-        edit.finishDetailTask?.cancel()
-        edit.finishDetailPending = nil
+        edit.darkroom.detailTask?.cancel()
+        edit.darkroom.detailPending = nil
         filterEdit = nil
         brushRevision += 1
     }
@@ -605,8 +592,8 @@ extension EditorSession {
         }
         edit.committing = true
         edit.previewTask?.cancel()
-        edit.finishDetailTask?.cancel()
-        edit.finishDetailPending = nil
+        edit.darkroom.detailTask?.cancel()
+        edit.darkroom.detailPending = nil
         if edit.kind != .cameraRaw { filterSettings = edit.settings }
         isProjectBusy = true
         // The preview stays up until the result is on the layer, so the canvas never flashes the original.
@@ -621,7 +608,7 @@ extension EditorSession {
             let grown = edit.grownTransform
             let spreads = edit.kind == .gaussianBlur || edit.kind == .motionBlur || edit.kind == .bloomGlow
             // A blur is cut back to what it spread over; a merged Darkroom to what the canvas holds.
-            let trimTo = spreads ? grown : edit.mergedLayers != nil ? edit.transform : nil
+            let trimTo = spreads ? grown : edit.darkroom.mergedLayers != nil ? edit.transform : nil
             let made = try await Task.detached(priority: .userInitiated) { () -> (asset: ImportedImage, transform: LayerTransform?) in
                 var image = try cached ?? PixelFilter.run(job)
                 var placed = grown

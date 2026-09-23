@@ -109,7 +109,7 @@ struct AIUpscaleTests {
         EditorSession.enlargeAfterDarkroom = { target, factor in if target === session { requested.append(factor) } }
         defer { EditorSession.enlargeAfterDarkroom = previous }
         session.beginFilter(.renderFinish)
-        session.filterEdit?.enlargeFactor = 4
+        session.filterEdit?.darkroom.enlargeFactor = 4
         await session.applyDarkroom()
         #expect(session.filterEdit == nil && requested == [4])
         #expect(session.activeLayer?.name.hasSuffix("· Tonal Contrast") == true)

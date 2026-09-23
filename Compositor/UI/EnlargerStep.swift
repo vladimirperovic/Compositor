@@ -11,7 +11,7 @@ struct EnlargerStep: View {
     let session: EditorSession
     private var store: AIModelStore { .shared }
     private var edit: FilterEdit? { session.filterEdit }
-    private var factor: Int { edit?.enlargeFactor ?? 0 }
+    private var factor: Int { edit?.darkroom.enlargeFactor ?? 0 }
 
     static func isReady(session: EditorSession, factor: Int) -> Bool {
         guard AIModelStore.shared.state == .ready else { return false }
@@ -32,11 +32,11 @@ struct EnlargerStep: View {
                         Text("AI detail, after Apply").font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
-                    Toggle("Enlarger", isOn: Binding(get: { factor > 1 }, set: { edit?.enlargeFactor = $0 ? 2 : 0 }))
+                    Toggle("Enlarger", isOn: Binding(get: { factor > 1 }, set: { edit?.darkroom.enlargeFactor = $0 ? 2 : 0 }))
                         .labelsHidden().toggleStyle(.checkbox).accessibilityLabel("Enlarge after Apply")
                 }
                 if factor > 1 {
-                    Picker("Scale", selection: Binding(get: { factor }, set: { edit?.enlargeFactor = $0 })) {
+                    Picker("Scale", selection: Binding(get: { factor }, set: { edit?.darkroom.enlargeFactor = $0 })) {
                         Text("2×").tag(2)
                         Text("4×").tag(4)
                     }

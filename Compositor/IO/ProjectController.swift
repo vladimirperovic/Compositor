@@ -13,10 +13,7 @@ final class ProjectController {
     }
     init(session: EditorSession) {
         self.session = session
-        EditorSession.enlargeAfterDarkroom = { [weak self] session, factor in
-            guard let self, session === self.session else { return }
-            Task { await self.aiUpscale(factor: factor, autoStart: true) }
-        }
+        listenForDarkroomEnlarger()
     }
 
     private func begin() -> Bool {
@@ -126,18 +123,7 @@ final class ProjectController {
     func aiUpscale(factor: Int = 2, autoStart: Bool = false) async {
         guard let window, session.canAIUpscale, begin() else { return }
         defer { session.isProjectBusy = false }
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let sheet = NSWindow()
-            sheet.styleMask = [.titled, .fullSizeContentView]
-            sheet.title = "Enlarger"
-            sheet.contentViewController = NSHostingController(rootView: AIUpscaleSheet(session: session, factor: factor, autoStart: autoStart) {
-                window.endSheet(sheet)
-                sheet.orderOut(nil)
-                sheet.contentViewController = nil
-                continuation.resume()
-            })
-            window.beginSheet(sheet)
-        }
+        await presentEnlarger(in: window, factor: factor, autoStart: autoStart)
     }
 
     func exportJPEG() async {
