@@ -79,6 +79,16 @@ The same core runs on the web, because it is plain C with exactly one platform d
 them — a serial loop by default, a pool of pthreads when compiled with `-pthread` — and the pixels come out
 identical either way, which the C suite checks by running against both shims.
 
+The build writes the tool twice: `index.html`, a page of its own, and `tool.html`, the same markup without
+a page around it, for a site that brings its own header and footer — it goes between them with a PHP
+include, and the page is then `darkroom/index.php`, which the folder's `.htaccess` puts first. Both wrap the
+tool in `#darkroom`, and the build scopes every selector in the stylesheet to it, tokens included, so
+nothing the tool defines reaches the site's own header and footer. Inside a site the tool stays in the page
+until it is asked for the window (`data-chrome="page"` on the container); on its own it takes the window at
+once. The folder's Content-Security-Policy is the site's own with `'wasm-unsafe-eval'` and a worker added,
+so the site's fonts, analytics and maps keep working on that page — it has to be kept in step with the
+site's root `.htaccess`.
+
 `python3 scripts/build-web.py` compiles `FinishPixels.c` and `web/wasm/darkroom.c` to WebAssembly with
 Emscripten and assembles `build/web`: an HTML page, its script and style, `darkroom.wasm` (about 20 KB) and
 an example image. Nothing runs on the server, so publishing is a copy of that folder into any directory that

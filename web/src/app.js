@@ -260,10 +260,15 @@ function scrollHints() {
   }
 }
 
+/// Whether the tool sits inside a page of its own (the standalone one) or inside the site, between its
+/// header and footer — in which case it does not take the window until it is asked to.
+const insidePage = () => document.getElementById('darkroom')?.dataset.chrome === 'page';
+
 /// The editing view: the image over the whole window, filters beside it. Leaving keeps the image loaded
 /// and gives the page back, with one button to step into it again.
 function enterEditing() {
   document.body.classList.add('editing');
+  el('leave').querySelector('span').textContent = 'Close';
   // On a phone the sheet would cover the picture, so it starts out of the way behind its own button.
   const away = window.innerWidth <= 1080;
   document.body.classList.toggle('panel-hidden', away);
@@ -275,6 +280,7 @@ function enterEditing() {
 
 function leave() {
   document.body.classList.remove('editing');
+  el('leave').querySelector('span').textContent = 'Edit image';
   measureChrome();
   if (state.source) { buildPreview(); schedule(); }
 }
@@ -642,7 +648,14 @@ function adopt(source) {
   el('panelToggle').hidden = false;
   document.body.classList.add('has-image');
   for (const id of ['compare', 'cropMode', 'zoom', 'save', 'reset']) el(id).disabled = false;
-  enterEditing();
+  if (insidePage() && !document.body.classList.contains('editing')) {
+    // Between a site's header and footer: show the picture in the page, and wait to be asked for the rest.
+    el('leave').hidden = false;
+    el('panelToggle').hidden = false;
+    leave();
+  } else {
+    enterEditing();
+  }
 }
 
 function cropTo(rect) {
@@ -728,6 +741,7 @@ function wire() {
   // A double click anywhere on the stage puts the panels away, and brings them back.
   el('stage').addEventListener('dblclick', () => {
     if (state.cropping) return;
+    if (!document.body.classList.contains('editing')) { enterEditing(); return; }
     panels(document.body.classList.contains('panel-hidden'));
   });
 

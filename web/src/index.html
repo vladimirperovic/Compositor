@@ -9,8 +9,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css?v=%%V%%">
+<style>body { margin: 0; background: #f5f1ea; }</style>
 </head>
 <body>
+<div id="darkroom">
 <header class="masthead">
   <a class="wordmark" href="https://vladimirperovic.com">Vladimir Perovic <span>Architects &amp; Associates</span></a>
   <nav><a href="https://vladimirperovic.com">Back to the studio</a></nav>
@@ -23,80 +25,7 @@
     Your image never leaves this page: it is read, processed and saved by your own browser.</p>
 </section>
 
-<div class="toolbar" id="toolbar">
-  <div class="tools">
-    <button type="button" id="open" class="strong">Open image</button>
-    <button type="button" id="compare"
-            title="Split the view — drag the line. Press and hold on the image (or the B key) to see the original whole.">Before / after</button>
-    <button type="button" id="cropMode">Crop</button>
-    <button type="button" id="zoom">100%</button>
-  </div>
-  <div class="save">
-    <span class="status" id="status"></span>
-    <select id="format" aria-label="Format">
-      <option value="image/jpeg">JPEG</option>
-      <option value="image/webp">WebP</option>
-      <option value="image/png">PNG</option>
-    </select>
-    <label class="quality" id="qualityWrap">Quality
-      <input type="range" id="quality" min="40" max="100" step="1" value="92">
-      <output id="qualityValue">92</output>
-    </label>
-    <button type="button" id="save" class="primary">Save image</button>
-    <button type="button" id="panelToggle" hidden>Filters</button>
-    <button type="button" id="leave" class="close" hidden aria-label="Close the editing view">
-      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1l10 10M11 1L1 11"/></svg>
-      <span>Close</span>
-    </button>
-  </div>
-</div>
-
-<main class="workspace" id="workspace">
-  <div class="sheet" id="sheet">
-    <aside class="panel" id="panel">
-      <div class="panel-head">
-        <p class="kicker">A look to start from</p>
-        <div class="chooser">
-          <select id="presets" aria-label="Preset">
-            <option value="">Custom</option>
-          </select>
-          <svg class="chevron" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
-        </div>
-      </div>
-      <div class="filters" id="filters"></div>
-      <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
-    </aside>
-
-    <aside class="inspector" id="inspector">
-      <div class="controls" id="controls"></div>
-      <div class="panel-foot">
-        <button type="button" class="link small" id="reset">Reset every filter</button>
-      </div>
-      <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
-    </aside>
-  </div>
-
-  <section class="stage" id="stage">
-    <div class="dropzone" id="dropzone">
-      <p class="kicker">Start here</p>
-      <p class="drop-title">Drop an image, or <button type="button" class="link" id="pick">choose a file</button></p>
-      <p class="drop-note">JPEG, PNG, WebP or TIFF. Large renders are fine — the preview works at screen size
-        and the full resolution is processed only when you save.</p>
-      <p class="drop-note">Or <button type="button" class="link" id="example">try it on one of our renders</button>.</p>
-    </div>
-    <div class="viewer" id="viewer" hidden>
-      <canvas id="canvas"></canvas>
-      <div class="crop-overlay" id="cropOverlay" hidden><div class="crop-rect" id="cropRect"></div></div>
-    </div>
-    <div class="busy" id="busy" hidden><span></span></div>
-  </section>
-</main>
-
-<div class="crop-actions" id="cropActions" hidden>
-  <span>Drag on the image, then</span>
-  <button type="button" id="cropApply" class="primary">Crop</button>
-  <button type="button" id="cropCancel" class="quiet">Cancel</button>
-</div>
+<!--TOOL-->
 
 <footer class="colophon">
   <p>Processing runs in your browser through the same C code as the desktop version, compiled to
@@ -104,7 +33,7 @@
     project, <a href="https://vladimirperovic.com/project.php?id=etr">a private apartment interior</a>.</p>
 </footer>
 
-<input type="file" id="file" accept="image/*" hidden>
 <script type="module" src="app.js?v=%%V%%"></script>
+</div>
 </body>
 </html>

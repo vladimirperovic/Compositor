@@ -261,7 +261,7 @@ body:not(.editing) .sheet { display: none; }
 
 /* Editing: the image fills the window, and the chrome floats over it ------ */
 
-body.editing { overflow: hidden; background: var(--stage); }
+body.editing { overflow: hidden; background: #17171a; }
 body.editing .masthead,
 body.editing .intro,
 body.editing .colophon { display: none; }

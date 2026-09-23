@@ -17,6 +17,7 @@ Needs Emscripten. If emcc is not on PATH, the script uses an emsdk checked out b
 """
 import argparse
 import hashlib
+import re
 import os
 import shutil
 import subprocess
@@ -29,16 +30,28 @@ OUT = ROOT / "build/web"
 CORE = ROOT / "Compositor/Rendering"
 EMSDK = ROOT.parent / "emsdk"
 
-# One policy for the folder, replacing whatever the surrounding site sets: the page needs WebAssembly, its
-# own worker and the studio's fonts, and nothing else.
-POLICY = ("default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; "
-          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-          "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; "
-          "object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'")
+# The policy for the folder. It is the site's own policy — so a page that brings its header and footer
+# keeps its fonts, analytics and maps — with what WebAssembly and a worker need added: without
+# 'wasm-unsafe-eval' the module does not compile at all. Keep it in step with the site's root .htaccess.
+POLICY = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.google.com https://www.gstatic.com "
+    "https://www.googletagmanager.com https://www.google-analytics.com; "
+    "worker-src 'self' blob:; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+    "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:; "
+    "img-src 'self' data: blob: https:; media-src 'self' blob:; "
+    "connect-src 'self' https://www.google.com https://www.google-analytics.com https://*.google-analytics.com "
+    "https://www.googletagmanager.com https://*.analytics.google.com https://googleads.g.doubleclick.net "
+    "https://*.g.doubleclick.net; "
+    "frame-src https://www.google.com https://maps.google.com; "
+    "frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
+)
 
 HTACCESS = f"""# Darkroom — static files only, no PHP. Written by scripts/build-web.py; edits here are overwritten.
-DirectoryIndex index.html
 AddType application/wasm .wasm
+# index.php first: a page that brings the site's header and footer takes precedence over the standalone one.
+DirectoryIndex index.php index.html
 
 <IfModule mod_headers.c>
     # The surrounding site's policy has no 'wasm-unsafe-eval', and two policies intersect rather than
@@ -96,6 +109,62 @@ def module(name, debug):
     ], check=True)
 
 
+SCOPE = "#darkroom"
+
+
+def scope_selectors(prelude):
+    """Every selector is put under the tool's own element, so a page around it keeps its styles."""
+    kept = ""
+    text = prelude
+    while True:
+        found = re.match(r"\s*(/\*.*?\*/)\s*", text, re.S)
+        if not found:
+            break
+        kept += text[:found.end()]
+        text = text[found.end():]
+    written = []
+    for selector in (part.strip() for part in text.split(",")):
+        if not selector:
+            continue
+        if selector in (":root", "html", "body"):
+            written.append(SCOPE)
+        elif selector == "*":
+            written.append(f"{SCOPE}, {SCOPE} *")
+        elif selector.startswith("body"):
+            # A class on <body> stays where it is; what it selects moves under the tool.
+            head, _, rest = selector.partition(" ")
+            written.append(head if not rest else f"{head} {SCOPE} {rest}")
+        else:
+            written.append(f"{SCOPE} {selector}")
+    unique = list(dict.fromkeys(written))
+    return kept + ",\n".join(unique) + " "
+
+
+def scope_css(css):
+    out = ""
+    at = 0
+    while at < len(css):
+        opening = css.find("{", at)
+        if opening < 0:
+            out += css[at:]
+            break
+        prelude = css[at:opening]
+        depth, cursor = 1, opening + 1
+        while cursor < len(css) and depth:
+            depth += (css[cursor] == "{") - (css[cursor] == "}")
+            cursor += 1
+        body = css[opening + 1:cursor - 1]
+        head = prelude.strip()
+        if head.startswith("@keyframes") or head.startswith("@font-face"):
+            out += prelude + "{" + body + "}\n"
+        elif head.startswith("@"):
+            out += prelude + "{" + scope_css(body) + "}\n"
+        else:
+            out += scope_selectors(prelude) + "{" + body + "}\n"
+        at = cursor
+    return out
+
+
 def build(debug=False):
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -103,6 +172,16 @@ def build(debug=False):
     module("darkroom.js", debug)
     for source in sorted(p for p in SRC.iterdir() if p.is_file()):
         shutil.copy2(source, OUT / source.name)
+
+    # The page is the tool with a page around it; the partial is the tool on its own, for a site that
+    # brings its own header and footer. Both put it inside #darkroom, which the stylesheet is scoped to.
+    tool = (SRC / "tool.html").read_text()
+    (OUT / "index.html").write_text((SRC / "index.html").read_text().replace("<!--TOOL-->", tool))
+    (OUT / "tool.html").write_text(
+        '<link rel="stylesheet" href="/darkroom/style.css?v=%%V%%">\n'
+        f'<div id="darkroom" data-chrome="page">\n{tool}</div>\n'
+        '<script type="module" src="/darkroom/app.js?v=%%V%%"></script>\n')
+    (OUT / "style.css").write_text(scope_css((SRC / "style.css").read_text()))
 
     # One version for the whole build, so what a file references is always what this build produced.
     digest = hashlib.sha256()
