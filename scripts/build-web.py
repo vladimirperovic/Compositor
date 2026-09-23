@@ -34,22 +34,32 @@ def emcc():
     sys.exit(f"emcc not found. Install Emscripten, or check out emsdk at {EMSDK} and run ./emsdk activate latest")
 
 
-def build(debug=False):
-    OUT.mkdir(parents=True, exist_ok=True)
+def module(name, debug, threaded=False):
+    """The WebAssembly build of the core."""
     command = emcc() + [
         str(ROOT / "web/wasm/darkroom.c"), str(CORE / "FinishPixels.c"),
         # web/wasm comes first: it holds the stand-in for libdispatch the core includes.
         "-I", str(ROOT / "web/wasm"), "-I", str(CORE),
         "-O3" if not debug else "-O0",
         "-std=c11", "-Wall", "-Wextra",
-        # One self-contained ES module the page imports; memory grows with the image it is given.
-        "-sMODULARIZE=1", "-sEXPORT_ES6=1", "-sENVIRONMENT=web,worker",
-        "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=64MB", "-sSTACK_SIZE=1MB",
+        # A classic script the worker pulls in with importScripts: an ES module worker cannot start the
+        # thread pool's own workers. Memory grows with the image it is given.
+        "-sMODULARIZE=1", f"-sEXPORT_NAME={'createDarkroomThreads' if threaded else 'createDarkroom'}",
+        "-sENVIRONMENT=web,worker", "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=64MB", "-sSTACK_SIZE=1MB",
         "-sEXPORTED_FUNCTIONS=_dk_apply,_dk_reach,_dk_is_opaque,_dk_premultiply,_dk_unpremultiply,_malloc,_free",
         "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32",
-        "-o", str(OUT / "darkroom.js"),
+        "-o", str(OUT / name),
     ]
+    if threaded:
+        # The pool is sized once, when the module loads, and the workers stay parked between passes.
+        command += ["-pthread", "-sPTHREAD_POOL_SIZE=Math.min(12,Math.max(2,(navigator.hardwareConcurrency||4)-1))",
+                    "-sPTHREAD_POOL_SIZE_STRICT=0"]
     subprocess.run(command, check=True)
+
+
+def build(debug=False):
+    OUT.mkdir(parents=True, exist_ok=True)
+    module("darkroom.js", debug)
     for name in sorted(p.name for p in SRC.iterdir() if p.is_file()):
         shutil.copy2(SRC / name, OUT / name)
     # Multithreading in the browser needs the page to be cross-origin isolated; on Apache these two

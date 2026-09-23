@@ -204,6 +204,9 @@ button, select, input { font: inherit; color: inherit; }
 }
 
 .panel-head { padding: 18px 18px 14px; border-bottom: 1px solid var(--line); }
+.panel-head-row { display: flex; align-items: baseline; justify-content: space-between; }
+.link.small { font-size: 11px; color: var(--muted); }
+body:not(.editing) .panel-head-row .link { display: none; }
 .panel-head .kicker { margin-bottom: 8px; }
 
 select {
@@ -275,6 +278,84 @@ input[type=range] {
 
 .control-note { font-size: 11.5px; color: var(--muted); margin: -6px 0 14px; }
 
+/* Editing: the image takes the screen, and the filters float over it ------ */
+
+body.editing { overflow: hidden; }
+body.editing .masthead,
+body.editing .intro,
+body.editing .colophon { display: none; }
+
+body.editing .workspace {
+  position: fixed;
+  inset: 0;
+  display: block;
+  padding: 0;
+  gap: 0;
+  z-index: 3;
+}
+
+body.editing .stage {
+  position: absolute;
+  inset: 0 0 var(--toolbar-height, 62px);
+  border: 0;
+  min-height: 0;
+  padding: 18px;
+  transition: padding .35s var(--ease);
+}
+
+/* The image keeps clear of the floating panel rather than sliding under it. */
+body.editing:not(.panel-hidden) .stage { padding-right: calc(var(--panel-width) + 34px); }
+
+body.editing .panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  bottom: calc(var(--toolbar-height, 62px) + 16px);
+  width: var(--panel-width);
+  max-height: none;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(14, 14, 16, .1);
+  box-shadow: 0 18px 50px rgba(14, 14, 16, .28);
+  transition: opacity .35s var(--ease), transform .35s var(--ease);
+  z-index: 4;
+}
+
+body.editing.panel-hidden .panel {
+  opacity: 0;
+  transform: translateX(14px);
+  pointer-events: none;
+}
+
+body.editing .toolbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  margin: 0;
+  padding: 11px 20px;
+  background: var(--glass);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line);
+  z-index: 4;
+}
+
+.leave, .panel-toggle {
+  position: absolute;
+  top: 16px;
+  z-index: 5;
+  background: var(--glass);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(14, 14, 16, .1);
+  padding: 7px 13px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .3s var(--ease);
+}
+
+.leave { left: 16px; }
+.panel-toggle { right: 16px; }
+body.editing:not(.panel-hidden) .panel-toggle { display: none; }
+.leave:hover, .panel-toggle:hover { border-color: var(--ink); }
+
 /* Toolbar --------------------------------------------------------------- */
 
 .toolbar {
@@ -340,6 +421,28 @@ input[type=range] {
   line-height: 1.7;
   color: var(--muted);
   max-width: 62ch;
+}
+
+.panel-foot { padding: 0 18px 18px; }
+
+/* On a narrow screen the panel becomes a sheet along the bottom, and the image keeps the rest. */
+@media (max-width: 900px) {
+  .toolbar { padding: 9px 12px; gap: 10px; }
+  .toolbar button { padding: 7px 11px; font-size: 12px; }
+  .status { display: none; }
+  .quality { gap: 6px; }
+  .quality input { width: 74px; }
+
+  body.editing .panel {
+    top: auto;
+    left: 12px;
+    right: 12px;
+    bottom: calc(var(--toolbar-height, 62px) + 12px);
+    width: auto;
+    max-height: 42vh;
+  }
+  body.editing:not(.panel-hidden) .stage { padding-right: 18px; padding-bottom: calc(42vh + 22px); }
+  body.editing.panel-hidden .panel { transform: translateY(14px); }
 }
 
 @media (max-width: 1040px) {

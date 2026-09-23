@@ -25,6 +25,8 @@
 
 <main class="workspace" id="workspace">
   <section class="stage" id="stage">
+    <button type="button" class="leave" id="leave" hidden>Close</button>
+    <button type="button" class="panel-toggle" id="panelToggle" hidden>Filters</button>
     <div class="dropzone" id="dropzone">
       <p class="kicker">Start here</p>
       <p class="drop-title">Drop an image, or <button type="button" class="link" id="pick">choose a file</button></p>
@@ -41,23 +43,28 @@
 
   <aside class="panel" id="panel">
     <div class="panel-head">
-      <p class="kicker">Looks</p>
+      <div class="panel-head-row">
+        <p class="kicker">Looks</p>
+        <button type="button" class="link small" id="hide">Hide</button>
+      </div>
       <select id="presets" aria-label="Preset">
         <option value="">Custom</option>
       </select>
     </div>
     <div class="filters" id="filters"></div>
     <div class="controls" id="controls"></div>
+    <div class="panel-foot">
+      <button type="button" class="link small" id="reset">Reset every filter</button>
+    </div>
   </aside>
 </main>
 
 <div class="toolbar" id="toolbar">
   <div class="tools">
     <button type="button" id="open">Open</button>
-    <button type="button" id="compare" class="hold">Before / after</button>
+    <button type="button" id="compare" title="Split the view — drag the line. Press and hold on the image (or the B key) to see the original whole.">Before / after</button>
     <button type="button" id="cropMode">Crop</button>
     <button type="button" id="zoom">100%</button>
-    <button type="button" id="reset" class="quiet">Reset filters</button>
   </div>
   <div class="save">
     <span class="status" id="status"></span>
