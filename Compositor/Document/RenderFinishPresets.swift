@@ -80,6 +80,17 @@ final class RenderFinishPresets {
             $0[.vignette] = amount(.vignette, 18)
             $0[.sensorGrain] = amount(.sensorGrain, 30, radius: 1.5)
         },
+        // The post chain behind the cinematic CG of the late 2000s: a graded negative, a warm/cool split,
+        // diffusion and halation through the lens, and grain over all of it. One filter plays the whole thing.
+        look("cinematic-film", "Cinematic Film") {
+            $0[.tonalContrast] = tonal(30, .balanced, shadows: 15, midtones: 25, highlights: 5, protectHighlights: 30)
+            $0[.cinematicLook] = cinematic(60, split: 65, glow: 55, grain: 35, radius: 30)
+        },
+        // The same chain pulled back to what a daylight interior can take, with the sky held down by a grad.
+        look("daylight-cinema", "Daylight Cinema") {
+            $0[.graduatedFilter] = graduated(30, from: .top, ends: 40, softness: 35, warmth: -10)
+            $0[.cinematicLook] = cinematic(40, split: 45, glow: 35, grain: 25, radius: 22)
+        },
         look("carbon-monochrome", "Carbon Monochrome") {
             $0[.tonalContrast] = tonal(40, .standard, shadows: 30, midtones: 45, highlights: 20)
             $0[.ink] = amount(.ink, 100)
@@ -107,6 +118,19 @@ final class RenderFinishPresets {
         value.contrastType = type
         value.shadows = shadows; value.midtones = midtones; value.highlights = highlights
         value.protectShadows = protectShadows; value.protectHighlights = protectHighlights
+        return value
+    }
+    private static func cinematic(_ amount: Double, split: Double, glow: Double, grain: Double,
+                                  radius: Double) -> FinishParameters {
+        var value = Self.amount(.cinematicLook, amount, radius: radius)
+        value.shadows = split; value.midtones = glow; value.highlights = grain
+        return value
+    }
+    private static func graduated(_ amount: Double, from edge: GradientEdge, ends: Double, softness: Double,
+                                  warmth: Double) -> FinishParameters {
+        var value = Self.amount(.graduatedFilter, amount)
+        value.gradientEdge = edge
+        value.highlights = ends; value.midtones = softness; value.shadows = warmth
         return value
     }
     private static func warmth(_ amount: Double, warmth: Double, saturation: Double) -> FinishParameters {

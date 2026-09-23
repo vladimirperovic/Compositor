@@ -5,9 +5,14 @@ import AppKit
 nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
     case tonalContrast, ink, proContrast, detailExtractor, bloom, warmth, vignette
     case sensorGrain, microTexture, highlightRolloff, chromaticAberration, lensSoftness
+    case splitTone, graduatedFilter, filmResponse, cinematicLook
     var id: Int { rawValue }
     /// Camera and lens character that makes a render read as a photograph.
-    var isPhotoRealism: Bool { rawValue >= FinishEffect.sensorGrain.rawValue }
+    var isPhotoRealism: Bool {
+        rawValue >= FinishEffect.sensorGrain.rawValue && rawValue <= FinishEffect.lensSoftness.rawValue
+    }
+    /// The grading and film emulation a colorist adds on top, and the one filter that plays the whole chain.
+    var isCinematic: Bool { rawValue >= FinishEffect.splitTone.rawValue }
     var title: String {
         switch self {
         case .tonalContrast: "Tonal Contrast"
@@ -22,6 +27,10 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .highlightRolloff: "Highlight Rolloff"
         case .chromaticAberration: "Chromatic Aberration"
         case .lensSoftness: "Lens Softness"
+        case .splitTone: "Split Tone"
+        case .graduatedFilter: "Graduated Filter"
+        case .filmResponse: "Film Response"
+        case .cinematicLook: "Cinematic Look"
         }
     }
     var summary: String {
@@ -38,6 +47,13 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .highlightRolloff: "Ease bright areas into white as a camera does, with a warm halation around windows and lamps."
         case .chromaticAberration: "Split red and blue slightly toward the corners, like a real lens."
         case .lensSoftness: "Soften the image gradually toward the corners, keeping the center sharp."
+        case .splitTone: "Cool the shadows and warm the light, the way a colorist separates them."
+        case .graduatedFilter: "Hold back a bright sky or ceiling with a soft graduated filter."
+        case .filmResponse: "A negative's toe and shoulder: blacks lift into haze, highlights bend into white."
+        case .cinematicLook: """
+            The whole finishing chain as one filter: film response, warm and cool split, fine texture, \
+            diffusion and halation, lens character, vignette and grain.
+            """
         }
     }
     /// A stable name for saved presets, independent of the order of the cases.
@@ -55,6 +71,10 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .highlightRolloff: "highlightRolloff"
         case .chromaticAberration: "chromaticAberration"
         case .lensSoftness: "lensSoftness"
+        case .splitTone: "splitTone"
+        case .graduatedFilter: "graduatedFilter"
+        case .filmResponse: "filmResponse"
+        case .cinematicLook: "cinematicLook"
         }
     }
     var usesRadius: Bool { radiusControl != nil }
@@ -67,7 +87,8 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .highlightRolloff: ("Halation radius", 1...100)
         case .chromaticAberration: ("Fringe at the corners", 1...12)
         case .lensSoftness: ("Softness radius", 1...40)
-        case .ink, .proContrast, .warmth, .vignette: nil
+        case .cinematicLook: ("Glow radius", 4...100)
+        case .ink, .proContrast, .warmth, .vignette, .splitTone, .graduatedFilter, .filmResponse: nil
         }
     }
     var defaults: FinishParameters {
@@ -85,6 +106,11 @@ nonisolated enum FinishEffect: Int, CaseIterable, Sendable, Identifiable {
         case .highlightRolloff: value.amount = 40; value.highlights = 30; value.radius = 16
         case .chromaticAberration: value.amount = 100; value.radius = 2
         case .lensSoftness: value.amount = 40; value.radius = 4
+        case .splitTone: value.amount = 50; value.shadows = -35; value.midtones = 0; value.highlights = 40
+        case .graduatedFilter: value.amount = 35; value.shadows = 0; value.midtones = 25; value.highlights = 45
+        case .filmResponse: value.amount = 60; value.shadows = 25; value.midtones = 25; value.highlights = 50
+        case .cinematicLook: value.amount = 55; value.shadows = 60; value.midtones = 50
+            value.highlights = 35; value.radius = 28
         }
         return value
     }
@@ -114,6 +140,21 @@ nonisolated enum TonalContrastType: Int, CaseIterable, Sendable, Identifiable {
     }
 }
 
+/// The edge a Graduated Filter comes in from, stored in the same field as the contrast type so presets
+/// saved by older versions keep loading.
+nonisolated enum GradientEdge: Int, CaseIterable, Sendable, Identifiable {
+    case top, bottom, left, right
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .top: "Top"
+        case .bottom: "Bottom"
+        case .left: "Left"
+        case .right: "Right"
+        }
+    }
+}
+
 nonisolated struct FinishParameters: Equatable, Sendable {
     var enabled = false
     var amount: Double = 50
@@ -127,6 +168,11 @@ nonisolated struct FinishParameters: Equatable, Sendable {
     var protectShadows: Double = 0
     var protectHighlights: Double = 0
 
+    var gradientEdge: GradientEdge {
+        get { GradientEdge(rawValue: contrastType.rawValue) ?? .top }
+        set { contrastType = TonalContrastType(rawValue: newValue.rawValue) ?? .standard }
+    }
+
     func normalized(for effect: FinishEffect) -> Self {
         let fallback = effect.defaults
         func finite(_ value: Double, _ range: ClosedRange<Double>, _ fallback: Double) -> Double {
@@ -134,7 +180,8 @@ nonisolated struct FinishParameters: Equatable, Sendable {
         }
         var result = self
         result.amount = finite(amount, 0...100, fallback.amount)
-        result.shadows = finite(shadows, effect == .warmth || effect == .tonalContrast ? -100...100 : 0...100, fallback.shadows)
+        let signedShadows: Set<FinishEffect> = [.warmth, .tonalContrast, .splitTone, .graduatedFilter]
+        result.shadows = finite(shadows, signedShadows.contains(effect) ? -100...100 : 0...100, fallback.shadows)
         result.midtones = finite(midtones, -100...100, fallback.midtones)
         result.highlights = finite(highlights, -100...100, fallback.highlights)
         result.radius = finite(radius, effect.radiusControl?.range ?? 1...100, fallback.radius)
@@ -151,7 +198,7 @@ nonisolated struct FinishParameters: Equatable, Sendable {
                              midtones: Float(midtones / 100), highlights: Float(highlights / 100),
                              radius: Float(radius * scale), saturation: Float(saturation / 100), palette: Int32(palette),
                              contrast_type: Int32(contrastType.rawValue), protect_shadows: Float(protectShadows / 100),
-                             protect_highlights: Float(protectHighlights / 100), seed: seed)
+                             protect_highlights: Float(protectHighlights / 100), seed: seed, scale: Float(scale))
     }
 
     /// Whether these settings leave every pixel of `effect` unchanged, so it can be skipped.
@@ -162,6 +209,8 @@ nonisolated struct FinishParameters: Equatable, Sendable {
             return shadows == 0 && midtones == 0 && highlights == 0 && saturation == 0
                 && protectShadows == 0 && protectHighlights == 0
         case .warmth: return shadows == 0 && saturation == 0
+        case .splitTone: return shadows == 0 && midtones == 0 && highlights == 0 && saturation == 0
+        case .filmResponse: return shadows == 0 && midtones == 0 && highlights == 0 && saturation == 0
         default: return false
         }
     }
@@ -218,8 +267,10 @@ nonisolated struct RenderFinishSettings: Equatable, Sendable {
     static let palettes = ["Carbon", "Sepia", "Cyanotype", "Warm Violet", "Teal", "Copper"]
     // Tone/detail first, then color, glow, lens and final framing; grain sits on top of everything, as a sensor's
     // would. UI order emphasizes the two main filters.
-    static let processingOrder: [FinishEffect] = [.tonalContrast, .detailExtractor, .microTexture, .proContrast, .ink, .warmth,
-                                                  .highlightRolloff, .bloom, .lensSoftness, .chromaticAberration, .vignette, .sensorGrain]
+    static let processingOrder: [FinishEffect] = [.tonalContrast, .detailExtractor, .microTexture, .proContrast, .filmResponse,
+                                                  .ink, .warmth, .splitTone, .graduatedFilter,
+                                                  .highlightRolloff, .bloom, .lensSoftness, .chromaticAberration, .vignette,
+                                                  .sensorGrain, .cinematicLook]
     subscript(_ effect: FinishEffect) -> FinishParameters {
         get { effects[effect.rawValue] }
         set { effects[effect.rawValue] = newValue }
@@ -234,22 +285,14 @@ nonisolated struct RenderFinishSettings: Equatable, Sendable {
     var isIdentity: Bool { activeEffects.isEmpty }
 
     /// How far, in pixels at `scale`, the active spatial effects reach: in a processed crop, pixels closer than this
-    /// to a cut edge differ from the whole layer's result. Three box passes reach three radii; chained effects add up.
+    /// to a cut edge differ from the whole layer's result. The processor answers for each effect, so the radii it
+    /// works in (three box passes, a look's own chain) are stated in one place only.
     func reach(scale: CGFloat = 1) -> Int {
         let settings = normalized
         var total = 0
         for effect in FinishEffect.allCases where !settings[effect].isNeutral(for: effect) {
-            let p = settings[effect]
-            switch effect {
-            case .tonalContrast, .detailExtractor, .bloom, .microTexture, .highlightRolloff, .lensSoftness:
-                if effect == .tonalContrast && p.shadows == 0 && p.midtones == 0 && p.highlights == 0 { continue }
-                if effect == .highlightRolloff && p.highlights <= 0 { continue }
-                let radius = p.radius * Double(scale) * (effect == .tonalContrast ? p.contrastType.radiusScale : 1)
-                total += 3 * Int(max(1, min(500, radius.rounded())))
-            case .chromaticAberration:
-                total += Int((p.radius * Double(scale) * p.amount / 100).rounded(.up)) + 2
-            case .ink, .proContrast, .warmth, .vignette, .sensorGrain: break
-            }
+            var pixels = settings[effect].pixelSettings(for: effect, scale: scale)
+            total += Int(finish_effect_reach(&pixels))
         }
         return total + 2
     }

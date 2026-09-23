@@ -117,6 +117,8 @@ static const float inks[6][6] = {
     {.16f,.045f,.035f, 1,.94f,.86f}      // copper
 };
 static const float gains[5] = {1, 1.25f, .85f, .85f, 1.65f};
+// Tonal Contrast's texture scales, relative to its Radius; TonalContrastType.radiusScale matches.
+static const float radii[5] = {1, .5f, .25f, 1.5f, 2};
 static const float halation_tint[3] = {1, .42f, .22f};
 
 typedef struct {
@@ -194,6 +196,40 @@ static void finish_row(void *context, size_t y) {
             out[0] += warmth * .15f * (1 - rgb[0]);
             out[1] += warmth * .025f * (1 - rgb[1]);
             out[2] -= warmth * .15f * rgb[2];
+        } else if (f->kind == 12) {
+            // Split Tone: one temperature per tonal range, the way a colorist cools the shadows and warms
+            // the light. The ranges are the same ones Tonal Contrast uses, so they meet without a seam.
+            float sw = 1 - smooth(.15f, .5f, l), hw = smooth(.5f, .85f, l);
+            float warmth = f->shadows * sw + f->midtones * (1 - sw - hw) + f->highlights * hw;
+            out[0] += warmth * .15f * (1 - rgb[0]);
+            out[1] += warmth * .025f * (1 - rgb[1]);
+            out[2] -= warmth * .15f * rgb[2];
+        } else if (f->kind == 13) {
+            // Graduated Filter: the matte box grad, darkening (and optionally warming) everything beyond a
+            // soft line, in whole-image coordinates so a crop matches.
+            float nx = ((float)x + f->offset_x + .5f) / f->full_w;
+            float ny = ((float)y + f->offset_y + .5f) / f->full_h;
+            float across = f->contrast_type == 1 ? 1 - ny : f->contrast_type == 2 ? nx
+                         : f->contrast_type == 3 ? 1 - nx : ny;
+            float line = clamp01(f->highlights), soft = fmaxf(.02f, clamp01(f->midtones));
+            float covered = 1 - smooth(line - soft, line + soft, across);
+            for (int c = 0; c < 3; ++c) out[c] *= 1 - .7f * covered;
+            float warmth = f->shadows * covered;
+            out[0] += warmth * .15f * (1 - out[0]);
+            out[1] += warmth * .025f * (1 - out[1]);
+            out[2] -= warmth * .15f * out[2];
+        } else if (f->kind == 14) {
+            // Film Response: a negative's toe and shoulder. Blacks lift into haze instead of clipping, an
+            // S-curve gives the midtones their bite, and the shoulder bends the brightest tones into white.
+            float target = l + clamp01(f->shadows) * .10f * (1 - smooth(0, .45f, l));
+            target += f->midtones * .6f * (target - .5f) * target * (1 - target);
+            float shoulder = clamp01(f->highlights);
+            const float knee = .55f;
+            if (shoulder > 0 && target > knee) {
+                float u = (target - knee) / (1 - knee);
+                target = knee + (1 - knee) * (u - shoulder * .35f * u * u);
+            }
+            for (int c = 0; c < 3; ++c) out[c] += target - l;
         } else {
             float nx = 2 * ((float)x + f->offset_x + .5f) / f->full_w - 1;
             float ny = 2 * ((float)y + f->offset_y + .5f) / f->full_h - 1;
@@ -301,23 +337,63 @@ static int is_spatial(const FinishEffectSettings *effect) {
 }
 
 static int valid_effect(const FinishEffectSettings *e) {
-    return e->kind >= 0 && e->kind <= 11 && isfinite(e->amount) && isfinite(e->radius) && isfinite(e->saturation)
-        && isfinite(e->protect_shadows) && isfinite(e->protect_highlights)
+    return e->kind >= 0 && e->kind <= 15 && isfinite(e->amount) && isfinite(e->radius) && isfinite(e->saturation)
+        && isfinite(e->protect_shadows) && isfinite(e->protect_highlights) && isfinite(e->scale)
         && isfinite(e->shadows) && isfinite(e->midtones) && isfinite(e->highlights);
 }
 
-int finish_apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride,
+// The Cinematic Look is one filter that stands for the whole finishing chain, in the order a colorist builds
+// it: the film's response, the warm/cool split, a touch of texture, the glow and halation of a diffusion
+// filter, what the lens does at the edges, the vignette, and the sensor's grain on top of all of it. Keeping
+// it here rather than in the app means every app built on this core plays the same chain.
+enum { FINISH_LOOK = 15, FINISH_LOOK_STEPS = 9 };
+
+static size_t expand_look(const FinishEffectSettings *look, FinishEffectSettings *out) {
+    float amount = clamp01(look->amount);
+    float split = clamp01(look->shadows), glow = clamp01(look->midtones), grain = clamp01(look->highlights);
+    // Radii the look sets itself are photographic constants in full-render pixels, so a preview scales them.
+    float scale = look->scale > 0 ? fminf(8, look->scale) : 1;
+    float radius = fmaxf(1, fminf(500, look->radius));
+    const FinishEffectSettings steps[FINISH_LOOK_STEPS] = {
+        {14, amount * .80f, .35f, .30f, 0, 1, 0, 0, 0, 0, 0, 0, scale},                             // film response
+        {12, amount * split, -.55f, 0, .50f, 1, 0, 0, 0, 0, 0, 0, scale},                           // split tone
+        {8, amount * .30f, 0, 0, 0, fmaxf(1, 1.2f * scale), 0, 0, 0, 0, 0, 0, scale},               // micro texture
+        {4, amount * glow * .70f, 0, 0, 0, radius, 0, 0, 0, 0, 0, 0, scale},                        // bloom
+        {9, amount * (.45f + .55f * glow), 0, 0, .35f + .45f * glow,                                // rolloff + halation
+         fmaxf(1, radius * .75f), 0, 0, 0, 0, 0, 0, scale},
+        {10, amount * .50f, 0, 0, 0, fmaxf(1, 2 * scale), 0, 0, 0, 0, 0, 0, scale},                 // aberration
+        {11, amount * .22f, 0, 0, 0, fmaxf(1, 3 * scale), 0, 0, 0, 0, 0, 0, scale},                 // lens softness
+        {6, amount * .30f, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, scale},                                    // vignette
+        {7, amount * grain, 0, 0, 0, fmaxf(.5f, 1.5f * scale), 0, 0, 0, 0, 0, look->seed, scale}    // sensor grain
+    };
+    size_t count = 0;
+    for (size_t i = 0; i < FINISH_LOOK_STEPS; ++i) if (steps[i].amount > 0) out[count++] = steps[i];
+    return count;
+}
+
+int finish_effect_reach(const FinishEffectSettings *effect) {
+    if (!effect || !valid_effect(effect) || clamp01(effect->amount) <= 0) return 0;
+    if (effect->kind == FINISH_LOOK) {
+        FinishEffectSettings steps[FINISH_LOOK_STEPS];
+        size_t count = expand_look(effect, steps);
+        int total = 0;
+        for (size_t i = 0; i < count; ++i) total += finish_effect_reach(&steps[i]);
+        return total;
+    }
+    if (effect->kind == 10) return (int)ceilf(fminf(200, fmaxf(0, effect->radius)) * clamp01(effect->amount)) + 2;
+    if (is_spatial(effect) || effect->kind == 11) {
+        int type = effect->contrast_type < 0 || effect->contrast_type > 4 ? 0 : effect->contrast_type;
+        float radius = effect->kind == 0 ? effect->radius * radii[type] : effect->radius;
+        return 3 * (int)fmaxf(1, fminf(500, roundf(radius)));
+    }
+    return 0;
+}
+
+static int apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride,
                        size_t full_width, size_t full_height, size_t offset_x, size_t offset_y,
                        const FinishEffectSettings *effects, size_t count) {
-    if (!rgba || !width || !height || width > INT_MAX / 2 || height > INT_MAX / 2
-        || width > SIZE_MAX / 4 || stride < width * 4 || height > SIZE_MAX / stride
-        || width > SIZE_MAX / height / sizeof(float)
-        || full_width > INT_MAX || full_height > INT_MAX
-        || offset_x > full_width || width > full_width - offset_x
-        || offset_y > full_height || height > full_height - offset_y || (!effects && count)) return 0;
     int spatial = 0, copies = 0;
     for (size_t e = 0; e < count; ++e) {
-        if (!valid_effect(&effects[e])) return 0;
         int active = clamp01(effects[e].amount) > 0;
         spatial |= (is_spatial(&effects[e]) || effects[e].kind == 11) && active;
         copies |= effects[e].kind == 10 && active;
@@ -341,7 +417,6 @@ int finish_apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
         if (!opaque) coverage = malloc(bytes);
         if (!base || !scratch || (!opaque && !coverage)) { free(base); free(coverage); free(scratch); free(source); return 0; }
     }
-    static const float radii[5] = {1, .5f, .25f, 1.5f, 2};
     for (size_t e = 0; e < count; ++e) {
         FinishEffectSettings effect = effects[e];
         float amount = clamp01(effect.amount);
@@ -399,13 +474,45 @@ int finish_apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride
     return 1;
 }
 
+int finish_apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride,
+                       size_t full_width, size_t full_height, size_t offset_x, size_t offset_y,
+                       const FinishEffectSettings *effects, size_t count) {
+    if (!rgba || !width || !height || width > INT_MAX / 2 || height > INT_MAX / 2
+        || width > SIZE_MAX / 4 || stride < width * 4 || height > SIZE_MAX / stride
+        || width > SIZE_MAX / height / sizeof(float)
+        || full_width > INT_MAX || full_height > INT_MAX
+        || offset_x > full_width || width > full_width - offset_x
+        || offset_y > full_height || height > full_height - offset_y || (!effects && count)) return 0;
+    // Every effect is checked before a single pixel changes, and any Cinematic Look becomes the plain
+    // effects it stands for, so the rest of the stack has one kind of work to do.
+    size_t total = 0;
+    for (size_t e = 0; e < count; ++e) {
+        if (!valid_effect(&effects[e])) return 0;
+        size_t steps = effects[e].kind == FINISH_LOOK ? FINISH_LOOK_STEPS : 1;
+        if (total > SIZE_MAX / sizeof(FinishEffectSettings) - steps) return 0;
+        total += steps;
+    }
+    if (total == count)
+        return apply_stack(rgba, width, height, stride, full_width, full_height, offset_x, offset_y, effects, count);
+    FinishEffectSettings *flat = malloc(total * sizeof *flat);
+    if (!flat) return 0;
+    size_t n = 0;
+    for (size_t e = 0; e < count; ++e) {
+        if (effects[e].kind == FINISH_LOOK) n += expand_look(&effects[e], flat + n);
+        else flat[n++] = effects[e];
+    }
+    int done = apply_stack(rgba, width, height, stride, full_width, full_height, offset_x, offset_y, flat, n);
+    free(flat);
+    return done;
+}
+
 int finish_apply_region(uint8_t *rgba, size_t width, size_t height, size_t stride,
                         size_t full_width, size_t full_height, size_t offset_x, size_t offset_y,
                         int kind, float amount, float shadows, float midtones, float highlights,
                         float radius, float saturation, int palette, int contrast_type,
                         float protect_shadows, float protect_highlights) {
     FinishEffectSettings effect = {kind, amount, shadows, midtones, highlights, radius, saturation,
-                                   palette, contrast_type, protect_shadows, protect_highlights, 0};
+                                   palette, contrast_type, protect_shadows, protect_highlights, 0, 1};
     return finish_apply_stack(rgba, width, height, stride, full_width, full_height, offset_x, offset_y, &effect, 1);
 }
 

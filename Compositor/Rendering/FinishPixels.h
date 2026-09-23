@@ -5,14 +5,22 @@
 // In-place, premultiplied RGBA8. Alpha and padding are preserved. Returns 0 on invalid input or allocation failure.
 // kind: tonal contrast, ink, pro contrast, detail extractor, bloom, warmth, vignette, then the photo realism
 // effects: sensor grain, micro texture, highlight rolloff (highlights = halation), chromatic aberration,
-// lens softness. amount and tone weights: 0...1; saturation and warmth: -1...1; radius: pixels (grain size,
-// texture scale, halation radius, fringe width at the corners, softness radius). seed: the grain pattern.
+// lens softness, then the cinematic ones: split tone (shadows/midtones/highlights = temperature per range),
+// graduated filter (shadows = warmth, midtones = softness, highlights = the line, contrast_type = the edge it
+// comes from), film response (shadows = lifted blacks, midtones = S-curve, highlights = shoulder) and the
+// cinematic look, one filter that runs the whole finishing chain (shadows = warm/cool split, midtones = glow,
+// highlights = grain, radius = glow radius). amount and tone weights: 0...1; saturation and warmth: -1...1;
+// radius: pixels (grain size, texture scale, halation radius, fringe width at the corners, softness radius).
+// seed: the grain pattern.
 typedef struct {
     int kind;
     float amount, shadows, midtones, highlights, radius, saturation;
     int palette, contrast_type;
     float protect_shadows, protect_highlights;
     uint32_t seed;
+    // Processed pixels per layer pixel. Only the cinematic look reads it, to keep the radii it sets itself
+    // (grain, fringe, softness) the size they would be in the full render. 0 means 1.
+    float scale;
 } FinishEffectSettings;
 
 // Several effects in order, sharing one set of working planes. The pixels are a crop starting at
@@ -21,6 +29,9 @@ typedef struct {
 int finish_apply_stack(uint8_t *rgba, size_t width, size_t height, size_t stride,
                        size_t full_width, size_t full_height, size_t offset_x, size_t offset_y,
                        const FinishEffectSettings *effects, size_t count);
+// How many pixels beyond a crop this effect reads, so a region rendered on its own matches the whole image.
+// 0 for per-pixel effects, and for an invalid or inactive one.
+int finish_effect_reach(const FinishEffectSettings *effect);
 int finish_apply(uint8_t *rgba, size_t width, size_t height, size_t stride,
                  int kind, float amount, float shadows, float midtones, float highlights,
                  float radius, float saturation, int palette, int contrast_type,

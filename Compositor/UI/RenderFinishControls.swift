@@ -38,6 +38,33 @@ struct RenderFinishControls: View {
                     slider("Protect highlights", \.protectHighlights, range: 0...100)
                 }
                 if selected == .highlightRolloff { slider("Halation", \.highlights, range: 0...100) }
+                if selected == .splitTone {
+                    slider("Highlights", \.highlights, range: -100...100)
+                    slider("Midtones", \.midtones, range: -100...100)
+                    slider("Shadows", \.shadows, range: -100...100)
+                    Text("Below zero is cool, above zero is warm.").font(.caption2).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if selected == .graduatedFilter {
+                    Picker("From", selection: Binding(get: { settings[selected].gradientEdge },
+                        set: { settings[selected].gradientEdge = $0 })) {
+                        ForEach(GradientEdge.allCases) { Text($0.title).tag($0) }
+                    }
+                    slider("Where it ends", \.highlights, range: 0...100)
+                    slider("Softness", \.midtones, range: 0...100)
+                    slider("Warmth", \.shadows, range: -100...100)
+                }
+                if selected == .filmResponse {
+                    slider("Shoulder", \.highlights, range: 0...100)
+                    slider("Midtone curve", \.midtones, range: -100...100)
+                    slider("Lifted blacks", \.shadows, range: 0...100)
+                    slider("Saturation", \.saturation, range: -100...100)
+                }
+                if selected == .cinematicLook {
+                    slider("Warm / cool split", \.shadows, range: 0...100)
+                    slider("Glow", \.midtones, range: 0...100)
+                    slider("Grain", \.highlights, range: 0...100)
+                }
                 if let control = selected.radiusControl { slider(control.title, \.radius, range: control.range, unit: "px") }
                 if selected == .ink {
                     Picker("Palette", selection: Binding(get: { settings[selected].palette }, set: { settings[selected].palette = $0 })) {
@@ -97,13 +124,18 @@ struct RenderFinishFilterList: View {
         case .highlightRolloff: "sun.haze"
         case .chromaticAberration: "rainbow"
         case .lensSoftness: "camera.macro"
+        case .splitTone: "paintpalette"
+        case .graduatedFilter: "circle.bottomhalf.filled"
+        case .filmResponse: "film"
+        case .cinematicLook: "wand.and.stars"
         }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(FinishEffect.allCases) { effect in
-                if effect == .sensorGrain {
-                    Text("PHOTO REALISM").font(.system(size: 10, weight: .semibold)).tracking(1.5)
+                if effect == .sensorGrain || effect == .splitTone {
+                    Text(effect == .sensorGrain ? "PHOTO REALISM" : "CINEMATIC")
+                        .font(.system(size: 10, weight: .semibold)).tracking(1.5)
                         .foregroundStyle(.secondary).padding(.top, 10).padding(.leading, 4)
                 }
                 HStack(spacing: 10) {
