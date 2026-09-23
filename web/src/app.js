@@ -25,7 +25,7 @@ const state = {
   draftScale: 1,
   quick: false,
   shown: null,         // { data, width, height } the last filtered frame, kept for comparing
-  split: false,        // the vertical line: original on its left, filtered on its right
+  split: true,         // the vertical line: original on its left, filtered on its right
   splitAt: 0.5,
   holding: false,      // pressing on the image shows the original underneath
   fullResult: null,    // { signature, data } so saving and 100% do not repeat the same work
@@ -252,20 +252,29 @@ function viewBox() {
 
 const pixelRatio = () => Math.min(2, window.devicePixelRatio || 1);
 
+/// Whether either panel is scrolled short of its end, so the chevron can say there is more.
+function scrollHints() {
+  for (const id of ['panel', 'inspector']) {
+    const box = el(id);
+    box.classList.toggle('has-more', box.scrollHeight - box.scrollTop - box.clientHeight > 4);
+  }
+}
+
 /// The editing view: the image over the whole window, filters beside it. Leaving keeps the image loaded
 /// and gives the page back, with one button to step into it again.
 function enterEditing() {
   document.body.classList.add('editing');
   // On a phone the sheet would cover the picture, so it starts out of the way behind its own button.
-  document.body.classList.toggle('panel-hidden', window.innerWidth <= 1080);
-  el('leave').textContent = 'Close';
+  const away = window.innerWidth <= 1080;
+  document.body.classList.toggle('panel-hidden', away);
+  el('panelToggle').classList.toggle('active', !away);
+  el('compare').classList.toggle('active', state.split);
   measureChrome();
   if (state.source) { buildPreview(); schedule(); }
 }
 
 function leave() {
   document.body.classList.remove('editing');
-  el('leave').textContent = 'Edit image';
   measureChrome();
   if (state.source) { buildPreview(); schedule(); }
 }
@@ -508,6 +517,7 @@ function refreshPanel() {
     row.querySelector('input').checked = p.enabled;
   }
   buildControls();
+  scrollHints();
 }
 
 function buildControls() {
@@ -677,7 +687,7 @@ async function save() {
 function wire() {
   el('pick').addEventListener('click', () => el('file').click());
   el('open').addEventListener('click', () => el('file').click());
-  el('hide')?.addEventListener('click', () => { document.body.classList.add('panel-hidden'); paint(); });
+
   el('file').addEventListener('change', event => open(event.target.files[0]));
   el('example').addEventListener('click', loadExample);
 
@@ -689,6 +699,14 @@ function wire() {
     stage.classList.remove('dragging');
     open(event.dataTransfer.files[0]);
   });
+
+  const panels = shown => {
+    document.body.classList.toggle('panel-hidden', !shown);
+    el('panelToggle').classList.toggle('active', shown);
+    paint();
+    scrollHints();
+  };
+  el('panelToggle').addEventListener('click', () => panels(document.body.classList.contains('panel-hidden')));
 
   const compare = el('compare');
   compare.addEventListener('click', () => {
@@ -707,10 +725,10 @@ function wire() {
   addEventListener('keydown', event => { if (event.key === 'b' && !event.repeat) hold(true); });
   addEventListener('keyup', event => { if (event.key === 'b') hold(false); });
 
-  // A double click puts the panels away, and brings them back.
-  canvas.addEventListener('dblclick', () => {
-    document.body.classList.toggle('panel-hidden');
-    paint();
+  // A double click anywhere on the stage puts the panels away, and brings them back.
+  el('stage').addEventListener('dblclick', () => {
+    if (state.cropping) return;
+    panels(document.body.classList.contains('panel-hidden'));
   });
 
   // On the image itself: the divider is a handle, everywhere else is press-and-hold for the original.
@@ -763,15 +781,16 @@ function wire() {
     if (document.body.classList.contains('editing')) leave();
     else enterEditing();
   });
-  el('panelToggle').addEventListener('click', () => { document.body.classList.remove('panel-hidden'); paint(); });
+
   addEventListener('keydown', event => {
     if (event.key === 'Escape' && document.body.classList.contains('editing')) leave();
     if (event.key === 'Tab' && state.source) {
       event.preventDefault();
-      document.body.classList.toggle('panel-hidden');
-      paint();
+      panels(document.body.classList.contains('panel-hidden'));
     }
   });
+
+  for (const id of ['panel', 'inspector']) el(id).addEventListener('scroll', scrollHints);
 
   let scrolling = null;
   el('stage').addEventListener('scroll', () => {
@@ -783,6 +802,7 @@ function wire() {
   wireCrop();
   addEventListener('resize', () => {
     measureChrome();
+    scrollHints();
     if (!state.source || state.zoom === 'actual') return;
     buildPreview();
     schedule();
@@ -804,6 +824,12 @@ function wireCrop() {
     guide.className = `third ${line[0]}`;
     guide.style[line[0] === 'v' ? 'left' : 'top'] = line[1] === '1' ? '33.333%' : '66.666%';
     rect.append(guide);
+  }
+  for (const side of ['n', 'e', 's', 'w']) {
+    const edge = document.createElement('div');
+    edge.className = `crop-edge ${side}`;
+    edge.dataset.handle = side;
+    rect.append(edge);
   }
   for (const corner of HANDLES) {
     const handle = document.createElement('div');
@@ -827,6 +853,7 @@ function wireCrop() {
 
   el('cropMode').addEventListener('click', () => {
     state.cropping = !state.cropping;
+    el('cropActions').hidden = !state.cropping;
     overlay.hidden = !state.cropping;
     el('cropActions').hidden = !state.cropping;
     el('cropMode').classList.toggle('active', state.cropping);

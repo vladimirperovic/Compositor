@@ -197,10 +197,48 @@ body:not(.editing) .sheet { display: none; }
 
 .crop-rect {
   position: absolute;
-  border: 1px solid rgba(245, 241, 234, .9);
-  box-shadow: 0 0 0 9999px rgba(14, 14, 16, .55);
+  border: 1px dashed rgba(245, 241, 234, .92);
+  box-shadow: 0 0 0 9999px rgba(14, 14, 16, .6);
   display: none;
+  cursor: move;
 }
+
+/* Thirds, as a camera's grid. */
+.crop-rect .third { position: absolute; background: rgba(245, 241, 234, .22); pointer-events: none; }
+.crop-rect .third.v { top: 0; bottom: 0; width: 1px; }
+.crop-rect .third.h { left: 0; right: 0; height: 1px; }
+
+/* The whole side is a handle, not only the square on it: the square is what you see, the strip along the
+   side is what you can grab. */
+.crop-edge { position: absolute; }
+.crop-edge.n { left: 0; right: 0; top: 0; height: 15px; margin-top: -7px; cursor: ns-resize; }
+.crop-edge.s { left: 0; right: 0; bottom: 0; height: 15px; margin-bottom: -7px; cursor: ns-resize; }
+.crop-edge.w { top: 0; bottom: 0; left: 0; width: 15px; margin-left: -7px; cursor: ew-resize; }
+.crop-edge.e { top: 0; bottom: 0; right: 0; width: 15px; margin-right: -7px; cursor: ew-resize; }
+
+.crop-handle { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; }
+
+.crop-handle::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin: -6px 0 0 -6px;
+  background: var(--paper);
+  border: 1px solid rgba(14, 14, 16, .55);
+  border-radius: 1px;
+}
+
+.crop-handle.nw { left: 0; top: 0; cursor: nwse-resize; }
+.crop-handle.n { left: 50%; top: 0; cursor: ns-resize; }
+.crop-handle.ne { left: 100%; top: 0; cursor: nesw-resize; }
+.crop-handle.w { left: 0; top: 50%; cursor: ew-resize; }
+.crop-handle.e { left: 100%; top: 50%; cursor: ew-resize; }
+.crop-handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
+.crop-handle.s { left: 50%; top: 100%; cursor: ns-resize; }
+.crop-handle.se { left: 100%; top: 100%; cursor: nwse-resize; }
 
 .crop-actions {
   position: fixed;
@@ -246,10 +284,11 @@ body.editing .inspector {
   bottom: 16px;
   overflow: auto;
   color: var(--glass-text);
-  background: var(--glass);
+  background: linear-gradient(180deg, rgba(30, 30, 34, .68), rgba(12, 12, 14, .66));
   backdrop-filter: blur(22px);
   border: 1px solid var(--glass-line);
-  border-radius: 3px;
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(245, 241, 234, .06);
   transition: opacity .45s var(--ease), transform .45s var(--ease);
   z-index: 4;
 }
@@ -264,27 +303,78 @@ body.editing.panel-hidden .inspector { transform: translateX(16px); }
 
 /* Panels ---------------------------------------------------------------- */
 
-.panel-head { padding: 18px 16px 16px; border-bottom: 1px solid var(--glass-line); }
-.panel-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.panel-head .kicker { margin: 0 0 14px; color: var(--accent-light); }
-.panel-head .kicker::before { width: 26px; }
-.panel-head .link.small { color: var(--glass-muted); }
+/* The chooser stays put while the list of filters scrolls under it. */
+.panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 16px 14px 14px;
+  border-bottom: 1px solid var(--glass-line);
+  border-radius: 13px 13px 0 0;
+  background: linear-gradient(180deg, rgba(31, 31, 35, .96), rgba(24, 24, 27, .92));
+  backdrop-filter: blur(8px);
+}
+.panel-head .kicker { margin: 0 0 11px; color: var(--accent-light); font-size: 9.5px; }
+.panel-head .kicker::before { width: 22px; }
 
-select {
+/* The look chooser: one control, with the chevron drawn rather than left to the platform. */
+.chooser { position: relative; }
+
+.chooser select {
   width: 100%;
   appearance: none;
-  background: transparent;
+  background: rgba(245, 241, 234, .05);
   border: 1px solid var(--glass-line);
-  border-radius: 2px;
-  padding: 9px 11px;
-  font-size: 12.5px;
-  color: inherit;
+  border-radius: 9px;
+  padding: 11px 34px 11px 13px;
+  font-size: 13px;
+  letter-spacing: .01em;
+  color: var(--glass-text);
   cursor: pointer;
-  transition: border-color .45s var(--ease);
+  transition: border-color .45s var(--ease), background .45s var(--ease);
 }
 
+.chooser select:hover { border-color: rgba(215, 181, 132, .5); background: rgba(245, 241, 234, .08); }
+.chooser select:focus-visible { outline: 1px solid var(--accent-light); outline-offset: 1px; }
+
+.chooser .chevron {
+  position: absolute;
+  right: 13px;
+  top: 50%;
+  width: 10px;
+  height: 6px;
+  margin-top: -3px;
+  fill: none;
+  stroke: var(--accent-light);
+  stroke-width: 1.4;
+  pointer-events: none;
+}
+
+select { appearance: none; background: transparent; border: 1px solid var(--glass-line); border-radius: 8px;
+         padding: 8px 11px; font-size: 12.5px; color: inherit; cursor: pointer;
+         transition: border-color .45s var(--ease); }
 select:hover { border-color: rgba(245, 241, 234, .38); }
 select option { color: var(--ink); }
+
+/* There is more below: a fade and a chevron, and nothing at all when everything fits. */
+.more {
+  position: sticky;
+  bottom: 0;
+  height: 34px;
+  margin-top: -34px;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 7px;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(12, 12, 14, .92), rgba(12, 12, 14, 0));
+  border-radius: 0 0 13px 13px;
+}
+
+.panel.has-more .more,
+.inspector.has-more .more { display: flex; }
+
+.more svg { width: 12px; height: 7px; fill: none; stroke: var(--accent-light); stroke-width: 1.4; opacity: .85; }
 
 .filters { padding: 8px 8px 18px; }
 
@@ -395,6 +485,28 @@ input[type=range] { width: 100%; accent-color: var(--accent-light); height: 18px
   background: rgba(215, 181, 132, .16);
   border-color: var(--accent-light);
   color: var(--paper);
+}
+
+.toolbar button.strong {
+  border-color: rgba(245, 241, 234, .55);
+  color: var(--paper);
+  font-weight: 500;
+}
+
+.toolbar button.close {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 13px;
+}
+
+.toolbar button.close svg {
+  width: 9px;
+  height: 9px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
 }
 
 .toolbar button.quiet { border-color: transparent; color: var(--glass-muted); }
