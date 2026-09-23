@@ -31,7 +31,8 @@ def sparkle(explicit):
     candidates += sorted(BUILD.glob("*.app/Contents/Frameworks/Sparkle.framework"))
     candidates.append(Path("/tmp/compositor-check/sparkle-real/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"))
     for candidate in candidates:
-        if candidate and (Path(candidate) / "Sparkle").exists():
+        # A flattened copy (no Versions/Current symlink) signs as an ambiguous bundle, so skip it.
+        if candidate and (Path(candidate) / "Sparkle").exists() and (Path(candidate) / "Versions/Current").is_symlink():
             return Path(candidate).resolve()
     sys.exit("Sparkle.framework not found: pass --sparkle-framework /path/to/Sparkle.framework")
 
@@ -58,7 +59,10 @@ def main():
     work = BUILD / "studio"
     work.mkdir(parents=True, exist_ok=True)
     if APP.exists() and framework.is_relative_to(APP):
-        framework = Path(shutil.copytree(framework, work / "Sparkle.framework", dirs_exist_ok=True))
+        # Keep the framework's symlinks: a flattened copy signs as an ambiguous bundle.
+        staged = work / "Sparkle.framework"
+        shutil.rmtree(staged, ignore_errors=True)
+        framework = Path(shutil.copytree(framework, staged, symlinks=True))
     shutil.rmtree(APP, ignore_errors=True)
     macos = APP / "Contents/MacOS"
     macos.mkdir(parents=True)
