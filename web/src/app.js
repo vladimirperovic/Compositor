@@ -113,15 +113,16 @@ function planBands(height, margin) {
   return bands;
 }
 
-/// One step of the stack, spread across the pool.
-async function applyStage(data, width, height, values, margin) {
+/// One step of the stack, spread across the pool. `place` says where these pixels sit inside the whole
+/// image, so a crop of it gets the same vignette, grain and fringe as the whole would.
+async function applyStage(data, width, height, values, margin, place) {
   const bands = planBands(height, margin);
-  const common = { op: 'apply', width, fullWidth: width, fullHeight: height, offsetX: 0, values,
-                   opaque: state.opaque };
+  const common = { op: 'apply', width, fullWidth: place.fullWidth, fullHeight: place.fullHeight,
+                   offsetX: place.x, values, opaque: state.opaque };
 
   if (bands.length === 1) {
     const copy = new Uint8ClampedArray(data);   // a worker takes ownership of whatever it is sent
-    const done = await ask(pool[0], { ...common, buffer: copy.buffer, height, offsetY: 0 }, [copy.buffer]);
+    const done = await ask(pool[0], { ...common, buffer: copy.buffer, height, offsetY: place.y }, [copy.buffer]);
     return new Uint8ClampedArray(done.buffer);
   }
 
@@ -131,7 +132,7 @@ async function applyStage(data, width, height, values, margin) {
     const bottom = Math.min(height, band.to + margin);
     const slice = data.slice(top * row, bottom * row);
     return ask(pool[index % pool.length],
-               { ...common, buffer: slice.buffer, height: bottom - top, offsetY: top },
+               { ...common, buffer: slice.buffer, height: bottom - top, offsetY: place.y + top },
                [slice.buffer]);
   });
 
@@ -161,22 +162,40 @@ function cacheFor(token) {
   return caches.get(token);
 }
 
+async function totalReach(scale) {
+  const stack = activeStack(scale);
+  if (!stack.count) return 0;
+  const { reaches } = await stagesFor(stack.values);
+  return reaches.reduce((sum, reach) => sum + reach, 0) + 2;
+}
+
 // What the last render cost, for looking into speed without a profiler.
 const report_timing = timing => { window.__darkroom = { pool: pool.length, ...timing }; };
 
 /// Runs the active filters over `data`, in the processor's premultiplied pixels, one step at a time.
 /// `keep` names an image whose steps are worth remembering (the preview); a one-off render leaves it out.
-async function process(data, width, height, scale, keep = null) {
-  const { values, count } = activeStack(scale);
-  if (!count) return data;
-  const { steps, reaches } = await stagesFor(values);
-  const total = reaches.length;
+async function process(data, width, height, scale, keep = null,
+                       place = { x: 0, y: 0, fullWidth: width, fullHeight: height }) {
+  const stack = activeStack(scale);
+  if (!stack.count) return data;
+  const { steps, reaches } = await stagesFor(stack.values);
+  // Steps that read no neighbours cost nothing to run together, and running them together saves a copy
+  // of the image and a round trip each. Steps that blur stay on their own, so each is cached separately.
+  const runs = [];
+  for (let i = 0; i < reaches.length; i += 1) {
+    const last = runs[runs.length - 1];
+    // Two rows of slack on anything that blurs; a step that reads nothing needs no overlap at all.
+    const margin = reaches[i] ? reaches[i] + 2 : 0;
+    if (margin === 0 && last && last.margin === 0) last.steps.push(i);
+    else runs.push({ margin, steps: [i] });
+  }
+  const total = runs.length;
   const token = keep ? `${keep}|${width}x${height}|${state.seed}` : null;
 
   const keys = [];
   let running = '';
-  for (let i = 0; i < total; i += 1) {
-    running += '|' + steps.subarray(i * SLOTS, (i + 1) * SLOTS).join(',');
+  for (const run of runs) {
+    for (const step of run.steps) running += '|' + steps.subarray(step * SLOTS, (step + 1) * SLOTS).join(',');
     keys.push(running);
   }
 
@@ -194,7 +213,10 @@ async function process(data, width, height, scale, keep = null) {
 
   const started = performance.now();
   for (let i = from; i < total; i += 1) {
-    current = await applyStage(current, width, height, steps.subarray(i * SLOTS, (i + 1) * SLOTS), reaches[i]);
+    const run = runs[i];
+    const values = new Float32Array(run.steps.length * SLOTS);
+    run.steps.forEach((step, at) => values.set(steps.subarray(step * SLOTS, (step + 1) * SLOTS), at * SLOTS));
+    current = await applyStage(current, width, height, values, run.margin, place);
     if (!kept) continue;
     const room = stored + current.length <= CACHE_BUDGET;
     kept.keys[i] = room ? keys[i] : null;
@@ -205,7 +227,8 @@ async function process(data, width, height, scale, keep = null) {
     kept.keys.length = total;
     kept.images.length = total;
   }
-  report_timing({ steps: total, reused: from, ms: +(performance.now() - started).toFixed(1) });
+  report_timing({ runs: total, steps: reaches.length, reused: from,
+                  ms: +(performance.now() - started).toFixed(1) });
   return current;
 }
 
@@ -290,9 +313,30 @@ function buildPreview() {
   state.draftScale = dw / width;
 }
 
-function show(data, width, height) {
-  state.shown = { data, width, height };
+function show(data, width, height, region = null) {
+  state.shown = { data, width, height, region };
   paint();
+}
+
+/// The part of the image on screen at 100%, with the margin the stack reads around it — or nothing when
+/// the whole image is barely bigger than that, in which case processing all of it is the simpler job.
+async function visiblePiece() {
+  const stage = el('stage');
+  const { width, height } = state.source;
+  const margin = await totalReach(1);
+  const x = Math.max(0, Math.floor(stage.scrollLeft) - margin);
+  const y = Math.max(0, Math.floor(stage.scrollTop) - margin);
+  const right = Math.min(width, Math.ceil(stage.scrollLeft + stage.clientWidth) + margin);
+  const bottom = Math.min(height, Math.ceil(stage.scrollTop + stage.clientHeight) + margin);
+  const w = right - x;
+  const h = bottom - y;
+  if (w <= 0 || h <= 0 || w * h * 1.6 > width * height) return null;
+  const row = width * 4;
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let line = 0; line < h; line += 1) {
+    data.set(state.source.data.subarray((y + line) * row + x * 4, (y + line) * row + (x + w) * 4), line * w * 4);
+  }
+  return { data, x, y, w, h };
 }
 
 /// How wide the image is drawn: filling the room it has, or one image pixel per point at 100%.
@@ -306,7 +350,30 @@ function displayWidth(width, height) {
 /// so comparing is instant however heavy the stack is.
 function paint() {
   if (!state.shown) return;
-  const { data, width, height } = state.shown;
+  const { data, width, height, region } = state.shown;
+  if (region) {
+    // A piece of the whole image: the canvas keeps the image's own size, showing the untouched picture
+    // where nothing has been processed yet, and the piece is drawn into place on top of it.
+    const whole = state.source;
+    if (canvas.width !== whole.width || canvas.height !== whole.height) {
+      canvas.width = whole.width;
+      canvas.height = whole.height;
+      context.putImageData(new ImageData(whole.data, whole.width, whole.height), 0, 0);
+    }
+    canvas.style.width = `${displayWidth(whole.width, whole.height)}px`;
+    if (state.holding) {
+      const row = whole.width * 4;
+      const untouched = new Uint8ClampedArray(width * height * 4);
+      for (let line = 0; line < height; line += 1) {
+        const from = (region.y + line) * row + region.x * 4;
+        untouched.set(whole.data.subarray(from, from + width * 4), line * width * 4);
+      }
+      context.putImageData(new ImageData(untouched, width, height), region.x, region.y);
+    } else {
+      context.putImageData(new ImageData(data, width, height), region.x, region.y);
+    }
+    return;
+  }
   canvas.width = width;
   canvas.height = height;
   canvas.style.width = `${displayWidth(width, height)}px`;
@@ -355,12 +422,19 @@ async function run() {
   const started = performance.now();
   try {
     if (heavy) {
-      const key = signature(1);
-      if (!state.fullResult || state.fullResult.signature !== key) {
-        const data = await process(state.source.data, state.source.width, state.source.height, 1);
-        state.fullResult = { signature: key, data };
+      const piece = await visiblePiece();
+      if (piece) {
+        const data = await process(piece.data, piece.w, piece.h, 1, null,
+                                   { x: piece.x, y: piece.y, fullWidth: state.source.width, fullHeight: state.source.height });
+        show(data, piece.w, piece.h, { x: piece.x, y: piece.y });
+      } else {
+        const key = signature(1);
+        if (!state.fullResult || state.fullResult.signature !== key) {
+          const data = await process(state.source.data, state.source.width, state.source.height, 1);
+          state.fullResult = { signature: key, data };
+        }
+        show(state.fullResult.data, state.source.width, state.source.height);
       }
-      show(state.fullResult.data, state.source.width, state.source.height);
     } else {
       const image = state.quick && state.draft ? state.draft : state.preview;
       const scale = image === state.draft ? state.draftScale : state.previewScale;
@@ -697,6 +771,13 @@ function wire() {
       document.body.classList.toggle('panel-hidden');
       paint();
     }
+  });
+
+  let scrolling = null;
+  el('stage').addEventListener('scroll', () => {
+    if (state.zoom !== 'actual' || !state.source) return;
+    clearTimeout(scrolling);
+    scrolling = setTimeout(() => schedule(), 140);
   });
 
   wireCrop();

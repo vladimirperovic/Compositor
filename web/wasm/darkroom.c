@@ -66,7 +66,8 @@ int dk_apply(uint8_t *rgba, int width, int height, int full_width, int full_heig
                               effects, (size_t)count);
 }
 
-// The margin a crop needs around it to match the whole image, the same sum the desktop app uses.
+// How many rows of neighbours these effects read: exactly the sum, so a caller can tell a step that reads
+// none (and can therefore run with no overlap at all) from one that blurs.
 int dk_reach(const float *values, int count) {
     if (!values || count < 0 || count > DK_MAX_EFFECTS) return 0;
     int total = 0;
@@ -75,7 +76,7 @@ int dk_reach(const float *values, int count) {
         dk_read(values + (size_t)e * DK_SLOTS, &effect);
         total += finish_effect_reach(&effect);
     }
-    return total + 2;
+    return total;
 }
 
 int dk_is_opaque(const uint8_t *rgba, int pixels) {

@@ -97,10 +97,17 @@ sewn back together. Splitting per step rather than per stack matters: a whole ci
 of neighbours, one blur inside it only 69. What each step produced is kept, so moving one filter's slider
 starts from the step before it.
 
+Two more things follow from running it a step at a time. Steps that read no neighbours are run together in
+one call, which saves a copy of the image and a round trip each — a cinematic stack is ten steps but eight
+calls. And at 100% the page processes the piece on screen plus the margin the stack reads, not the whole
+image, so zooming into a large render costs what is visible rather than what exists; scrolling brings the
+next piece.
+
 On a 1400 × 1249 render with six workers: Natural Interior 294 → 132 ms, Studio Daylight 462 → 212 ms,
 Photographic 589 → 263 ms, Cinema Negative 828 → 328 ms, and moving the Grain slider inside the Cinematic
-Look 828 → 98 ms. The result was checked against a single whole-image call of the same stack: of 5.2 million
-colour channels, one differed, by one level. For scale, on this Mac a 12 MP image with four filters takes
+Look 828 → 98 ms, and viewing at 100% 355 → 161 ms. Both were checked against a single whole-image call of
+the same stack: over the whole preview one channel of 5.2 million differed, by one level, and over the
+visible piece at 100%, sixteen of a million — the rounding the crop tests already allow. For scale, on this Mac a 12 MP image with four filters takes
 277 ms through libdispatch, 282 ms through a plain thread pool and 1141 ms with no threads at all.
 
 ## Validation
