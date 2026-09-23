@@ -154,6 +154,22 @@ final class ProjectWorkspace {
         }
     }
     static let layerType = "com.compositor.layer-row"
+    /// Cmd-V with a whole layer copied: pastes it complete — a copy above it in its own project, or brought over as
+    /// dragging it onto this tab does. False when there is none, and Paste goes on with pixels.
+    func pasteCopiedLayer() -> Bool {
+        let count = NSPasteboard.general.changeCount
+        guard let source = tabs.first(where: { $0.session.copiedLayer?.changeCount == count }),
+              let id = source.session.copiedLayer?.id,
+              source.session.document?.layers.contains(where: { $0.id == id }) == true else { return false }
+        if source.id == selectedID {
+            guard source.session.canEditLayers else { return false }
+            source.session.duplicateLayer(id, editName: "Paste")
+            return true
+        }
+        let destination = selectedID
+        Task { await copyLayer(id, into: destination) }
+        return true
+    }
     func copyLayer(_ id: UUID, into destination: UUID?, at point: CGPoint? = nil) async {
         guard canSwitch, let sourceTab = tabs.first(where: { $0.session.document?.layers.contains(where: { $0.id == id }) == true }),
               sourceTab.session.canEditLayers, let snapshot = sourceTab.session.projectSnapshot(),
@@ -196,7 +212,7 @@ final class ProjectWorkspace {
                 mask?.placement?.origin.x += center.x-anchor.x; mask?.placement?.origin.y += center.y-anchor.y
                 return ImageLayer(id: mapping[layer.id]!, asset: layer.asset, name: layer.name, isVisible: layer.isVisible,
                     transform: transform, parentID: layer.parentID.flatMap { mapping[$0] }, isGroup: layer.isGroup,
-                    opacity: layer.opacity, blendMode: layer.blendMode, mask: mask, maskSourceID: layer.maskSourceID.flatMap { mapping[$0] }, adjustment: layer.adjustment, shape: layer.shape, text: layer.text)
+                    opacity: layer.opacity, blendMode: layer.blendMode, mask: mask, maskSourceID: layer.maskSourceID.flatMap { mapping[$0] }, adjustment: layer.adjustment, shape: layer.shape, effects: layer.effects, text: layer.text)
             }
             target.session.isProjectBusy = false
             target.session.beginEdit("Copy Layers from Project")

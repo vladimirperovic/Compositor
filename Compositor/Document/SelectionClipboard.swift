@@ -8,6 +8,14 @@ struct PixelClipboard {
     let changeCount: Int
 }
 
+/// A whole layer copied with no selection. Paste brings it back complete — folder contents, mask, effects, editable
+/// text: in this project as a copy above it, in another as dragging it onto that project's tab does.
+struct CopiedLayer {
+    let id: UUID
+    /// As `PixelClipboard.changeCount`: anything copied since replaces it.
+    let changeCount: Int
+}
+
 extension EditorSession {
     /// Whole-pixel bounds of what Copy takes: the selection, or the whole canvas without one.
     /// Path boolean operations leave tiny float noise (59.9999999), so round with a tolerance
@@ -85,13 +93,26 @@ extension EditorSession {
         } catch { brushError = error.localizedDescription }
     }
 
+    /// Copy with no selection copies the layer itself, for Paste here or in another project. That works for folders
+    /// and adjustments too, which have no pixels of their own to copy.
+    var canCopyLayer: Bool { canEditLayers && activeLayer != nil && selection == nil && !isMaskSelected }
+
     /// Cmd-C: copies the selected pixels (or the whole layer) for Paste, and to the system
     /// pasteboard as PNG for other apps.
     func copySelection() {
-        guard canCopyPixels, let layer = activeLayer else { return }
+        guard canCopyPixels || canCopyLayer, let layer = activeLayer else { return }
+        guard canCopyPixels else {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(layer.id.uuidString, forType: NSPasteboard.PasteboardType("com.compositor.copied-layer"))
+            pixelClipboard = nil
+            copiedLayer = CopiedLayer(id: layer.id, changeCount: pasteboard.changeCount)
+            return
+        }
         do {
             guard let copied = try renderSelectedPixels(from: layer, mask: isMaskSelected) else { NSSound.beep(); return }
             store(copied)
+            if canCopyLayer { copiedLayer = CopiedLayer(id: layer.id, changeCount: NSPasteboard.general.changeCount) }
         } catch { brushError = error.localizedDescription }
     }
 
@@ -103,6 +124,7 @@ extension EditorSession {
             pasteboard.setData(png, forType: .png)
         }
         pixelClipboard = PixelClipboard(image: copied.image, origin: copied.region.origin, changeCount: pasteboard.changeCount)
+        copiedLayer = nil
     }
 
     /// Cmd-X: copy, then clear the selected pixels.
@@ -145,7 +167,12 @@ extension EditorSession {
     }
 
     func duplicateActiveLayer() {
-        guard canEditLayers, let layer = activeLayer,
+        if let activeLayerID { duplicateLayer(activeLayerID) }
+    }
+
+    /// A copy of the layer (a folder with all it holds) just above it: Duplicate Layer, and Paste of a layer Copy took whole.
+    func duplicateLayer(_ id: UUID, editName: String = "Duplicate Layer") {
+        guard canEditLayers, let layer = document?.layers.first(where: { $0.id == id }),
               let index = document?.layers.firstIndex(where: { $0.id == layer.id }) else { return }
         let included = descendantIDs(of: layer.id).union([layer.id])
         let originals = (document?.layers ?? []).filter { included.contains($0.id) }
@@ -159,7 +186,7 @@ extension EditorSession {
                 mask: original.mask, maskSourceID: original.maskSourceID.map { mapping[$0] ?? $0 },
                 adjustment: original.adjustment, shape: original.shape, effects: original.effects, text: original.text)
         }
-        beginEdit("Duplicate Layer")
+        beginEdit(editName)
         document?.layers.insert(contentsOf: copies, at: index + 1)
         for original in originals where collapsedGroupIDs.contains(original.id) {
             collapsedGroupIDs.insert(mapping[original.id]!)

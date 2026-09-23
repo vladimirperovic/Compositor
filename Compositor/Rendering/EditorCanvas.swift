@@ -162,7 +162,12 @@ final class CanvasView: NSView {
     private var displayedTargeting = false
     private var optionHeld = false
     private var palettePicking: Bool { session.tool == .eyedropper || (optionHeld && (session.tool == .brush || session.tool == .spotHealing || session.tool == .gradient) && session.brushStroke == nil && gradientDrag == nil) }
-    private var picking: Bool { palettePicking || session.colorPicker != nil || session.hueSampleMode != nil || session.levels?.sampleMode != nil }
+    private var picking: Bool {
+        palettePicking || session.colorPicker != nil || session.hueSampleMode != nil || session.levels?.sampleMode != nil
+            || session.filterEdit?.samplesWhiteBalance == true || session.filterEdit?.samplesPointColor == true
+            || session.filterEdit?.samplesDefringe == true
+            || session.filterEdit?.drawingCameraRawGeometryGuide == true
+    }
     /// View point where a targeted-adjustment drag began.
     private var hueTargetStart: CGPoint?
     private var samplingColor = false
@@ -732,8 +737,10 @@ final class CanvasView: NSView {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             let originalEvent = event
             guard let event = ShortcutSettings.shared.canvasEvent(event) else { return originalEvent }
-            guard let self, let window = self.window, event.window === window, !(window.firstResponder is NSText),
-                  event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            guard let self, let window = self.window, event.windowNumber == window.windowNumber,
+                  !(window.firstResponder is NSText) else { return originalEvent }
+            if self.handleKeyboardZoom(event) { return nil }
+            guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
                   let key = event.charactersIgnoringModifiers else { return originalEvent }
             // Shift-+ / Shift-− step the active layer's blend mode, in every tool.
             if event.modifierFlags.contains(.shift), key == "+" || key == "_" || event.keyCode == 24 || event.keyCode == 27 {
@@ -747,6 +754,26 @@ final class CanvasView: NSView {
             else { self.session.changeBrushHardness(increase: key == "}") }
             return nil
         }
+    }
+
+    /// Handle default zoom shortcuts on keyDown, including key repeat, without waiting for a menu command.
+    private func handleKeyboardZoom(_ event: NSEvent) -> Bool {
+        guard session.document != nil, event.modifierFlags.contains(.command),
+              event.modifierFlags.intersection([.control, .option]).isEmpty else { return false }
+
+        let zoomInIsDefault = ShortcutDefinition.all.first(where: { $0.isMenu && $0.title == "Zoom In" })
+            .map { ShortcutSettings.shared.chord($0) == $0.original } ?? true
+        let zoomOutIsDefault = ShortcutDefinition.all.first(where: { $0.isMenu && $0.title == "Zoom Out" })
+            .map { ShortcutSettings.shared.chord($0) == $0.original } ?? true
+
+        // '+' is '=' with Shift on a Mac keyboard; the keypad has its own key codes.
+        let isZoomIn = [24, 69].contains(event.keyCode)
+        let isZoomOut = [27, 78].contains(event.keyCode) && !event.modifierFlags.contains(.shift)
+        guard (isZoomIn && zoomInIsDefault) || (isZoomOut && zoomOutIsDefault) else { return false }
+
+        session.zoomKeyboard(by: isZoomIn ? 1 : -1)
+        synchronizeDisplay()
+        return true
     }
 
     private var lassoCursor: NSCursor { lassoCursor(flags: NSEvent.modifierFlags) }
@@ -958,7 +985,12 @@ final class CanvasView: NSView {
         // read back (see SeparableBlend).
         if !onSurface, document.layers.contains(where: { $0.adjustment != nil
             || SeparableBlend.needsSurface(session.displayedBlendMode(for: $0)) }) {
-            AdjustmentSurface.draw(in: context) { self.drawLayers(document, scale: scale, center: center, in: $0, onSurface: true) }
+            let visible = document.effectiveVisibleIDs
+            let padding = document.layers.filter { visible.contains($0.id) }
+                .compactMap(\.adjustment).map(\.samplingMargin).max() ?? 0
+            AdjustmentSurface.draw(in: context, padding: padding * scale) {
+                self.drawLayers(document, scale: scale, center: center, in: $0, onSurface: true)
+            }
             return
         }
         let byID = Dictionary(uniqueKeysWithValues: document.layers.map { ($0.id, $0) })
@@ -1113,6 +1145,7 @@ final class CanvasView: NSView {
         let live = LiveMaskRenderer(bounds: context.boundingBoxOfClipPath, source: { byID[$0]?.maskSourceID }, drawOwn: drawOwnWithDraft)
         live.adjustment = { byID[$0]?.adjustment }
         live.adjustmentOpacity = { byID[$0]?.effectiveOpacity(in: byID) ?? 1 }
+        live.adjustmentScale = scale
         let area = context.boundingBoxOfClipPath
         live.adjustmentClip = { [weak self] id, ctx in
             guard let self, let layer = byID[id], layer.mask?.isEnabled == true else { return }
@@ -1407,6 +1440,7 @@ final class CanvasView: NSView {
     }
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseExited(with event: NSEvent) {
+        session.filterEdit?.cameraRawReadout = nil
         brushPointer = nil
         updateBrushCursor()
         // Tools set their cursor directly while over the canvas, so put the arrow back on the
@@ -1415,6 +1449,10 @@ final class CanvasView: NSView {
     }
     override func mouseMoved(with event: NSEvent) {
         if !spaceHeld, hitsFilterDivider(convert(event.locationInWindow, from: nil)) { NSCursor.resizeLeftRight.set(); return }
+        if session.filterEdit?.kind == .cameraRaw, let document = session.document {
+            let point = convert(event.locationInWindow, from: nil)
+            session.updateCameraRawReadout(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+        }
         optionHeld = event.modifierFlags.contains(.option)
         if session.filterEdit?.kind == .renderFinish { NSCursor.openHand.set(); return }
         if picking { Self.eyedropperCursor.set(); return }
@@ -1564,6 +1602,30 @@ final class CanvasView: NSView {
             NSCursor.closedHand.set()
             return
         }
+        if session.filterEdit?.samplesWhiteBalance == true, !spaceHeld, let document = session.document {
+            session.sampleCameraRawWhiteBalance(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.samplesPointColor == true, !spaceHeld, let document = session.document {
+            session.sampleCameraRawPointColor(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.samplesDefringe == true, !spaceHeld, let document = session.document {
+            session.sampleCameraRawDefringe(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("filterPanel"))
+            return
+        }
+        if session.filterEdit?.drawingCameraRawGeometryGuide == true, !spaceHeld, let document = session.document {
+            session.beginCameraRawGeometryGuide(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if (session.filterEdit?.targetsCameraRawCurve == true || session.filterEdit?.targetsCameraRawMixer == true),
+           !spaceHeld, let document = session.document {
+            session.beginCameraRawDrag(at: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
         if session.levels?.sampleMode != nil, !spaceHeld, let document = session.document {
             session.sampleLevels(at: session.viewport.documentPoint(from: point, documentSize: document.size))
             FloatingPanelController.refocus(NSUserInterfaceItemIdentifier("levelsPanel"))
@@ -1633,6 +1695,15 @@ final class CanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if draggingFilterDivider { moveFilterDivider(to: point); NSCursor.resizeLeftRight.set(); return }
+        if session.filterEdit?.drawingCameraRawGeometryGuide == true, session.filterEdit?.cameraRawGuideDraft != nil,
+           let document = session.document {
+            session.continueCameraRawGeometryGuide(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
+        if session.filterEdit?.cameraRawDrag != nil, let document = session.document {
+            session.dragCameraRaw(to: session.viewport.documentPoint(from: point, documentSize: document.size))
+            return
+        }
         if textBoxAnchor != nil { dragTextGesture(to: point); return }
         if var drag = zoomDrag {
             let dx = point.x - drag.start.x
@@ -1797,6 +1868,10 @@ final class CanvasView: NSView {
             draggingFilterDivider = false
             return
         }
+        if session.filterEdit?.cameraRawGuideDraft != nil {
+            session.commitCameraRawGeometryGuide()
+        }
+        session.filterEdit?.cameraRawDrag = nil
         if textBoxAnchor != nil { finishTextGesture(); return }
         stopMarqueeAutoscroll()
         if let drag = zoomDrag {
@@ -1895,6 +1970,7 @@ final class CanvasView: NSView {
     override func keyDown(with event: NSEvent) {
         let physicalKey = event.keyCode
         guard let event = ShortcutSettings.shared.canvasEvent(event) else { return }
+        if handleKeyboardZoom(event) { return }
         if event.keyCode == 53, textBoxAnchor != nil { textBoxAnchor = nil; textBoxRect = nil; needsDisplay = true; return }
         if event.keyCode == 53, session.textDraft != nil { session.cancelText(); return }
         // A drag session swallows the flagsChanged that says Option was let go, which left the canvas thinking it
