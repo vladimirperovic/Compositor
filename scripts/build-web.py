@@ -126,7 +126,9 @@ def scope_selectors(prelude):
     for selector in (part.strip() for part in text.split(",")):
         if not selector:
             continue
-        if selector in (":root", "html", "body"):
+        if SCOPE in selector:
+            written.append(selector)          # already says where it belongs
+        elif selector in (":root", "html", "body"):
             written.append(SCOPE)
         elif selector == "*":
             written.append(f"{SCOPE}, {SCOPE} *")

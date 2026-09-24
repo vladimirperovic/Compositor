@@ -271,6 +271,7 @@ body.editing .masthead,
 body.editing .intro,
 body.editing .colophon { display: none; }
 
+body.editing #darkroom { position: relative; z-index: 9000; }
 body.editing .workspace { position: fixed; inset: 0; padding: 0; z-index: 3; }
 
 body.editing .stage {
@@ -579,6 +580,13 @@ body:not(.editing) .toolbar {
 }
 
 body:not(.editing) .toolbar button { border-color: var(--line); }
+body:not(.editing) .toolbar button.strong { color: var(--ink); border-color: var(--ink); }
+
+body:not(.editing) .toolbar button.active {
+  color: var(--ink);
+  background: rgba(139, 111, 71, .14);
+  border-color: var(--accent);
+}
 body:not(.editing) .toolbar button:hover:not(:disabled) { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 body:not(.editing) .toolbar button.quiet { color: var(--muted); }
 body:not(.editing) .toolbar button.primary { background: var(--accent); border-color: var(--accent); color: var(--paper); }

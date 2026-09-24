@@ -976,7 +976,7 @@ function wireCrop() {
 /// The studio's own render, so the page opens with something to work on.
 async function loadExample() {
   try {
-    const response = await fetch('sample.jpg?v=%%V%%');
+    const response = await fetch(new URL('sample.jpg?v=%%V%%', import.meta.url));
     if (response.ok) await open(new File([await response.blob()], 'example.jpg', { type: 'image/jpeg' }));
   } catch (error) {
     report(0, 'The example image could not be loaded — open one of your own.');
