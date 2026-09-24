@@ -283,6 +283,12 @@ function scrollHints() {
 /// header and footer — in which case it does not take the window until it is asked to.
 const insidePage = () => document.getElementById('darkroom')?.dataset.chrome === 'page';
 
+/// A link that ends in #edit asks for the window straight away: the first image, the example included, opens
+/// in the editing view instead of waiting in the page. The mark is taken off the address at once, so a reload
+/// or a shared link brings back the page, and Back leads to wherever the link was.
+let takeWindow = location.hash === '#edit';
+if (takeWindow) history.replaceState(history.state, '', location.pathname + location.search);
+
 /// The editing view: the image over the whole window, filters beside it. Leaving keeps the image loaded
 /// and gives the page back, with one button to step into it again.
 function enterEditing() {
@@ -702,12 +708,13 @@ function adopt(source) {
   el('panelToggle').hidden = false;
   document.body.classList.add('has-image');
   for (const id of ['compare', 'cropMode', 'zoom', 'save', 'reset']) el(id).disabled = false;
-  if (insidePage() && !document.body.classList.contains('editing')) {
+  if (insidePage() && !takeWindow && !document.body.classList.contains('editing')) {
     // Between a site's header and footer: show the picture in the page, and wait to be asked for the rest.
     el('leave').hidden = false;
     el('panelToggle').hidden = false;
     leave();
   } else {
+    takeWindow = false;
     enterEditing();
   }
 }

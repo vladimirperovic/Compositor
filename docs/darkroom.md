@@ -85,7 +85,9 @@ include, and the page is then `darkroom/index.php`, which the folder's `.htacces
 tool in `#darkroom`, and the build scopes every selector in the stylesheet to it, tokens included, so
 nothing the tool defines reaches the site's own header and footer. Inside a site the tool stays in the page
 until it is asked for the window (`data-chrome="page"` on the container); on its own it takes the window at
-once. The folder's Content-Security-Policy is the site's own with `'wasm-unsafe-eval'` and a worker added,
+once. A link to the page that ends in `#edit` asks for the window straight away: the first image,
+the example included, opens in the editing view, and the mark comes off the address so a reload brings the
+page back. The folder's Content-Security-Policy is the site's own with `'wasm-unsafe-eval'` and a worker added,
 so the site's fonts, analytics and maps keep working on that page — it has to be kept in step with the
 site's root `.htaccess`.
 
