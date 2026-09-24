@@ -175,6 +175,12 @@ body:not(.editing) .sheet { display: none; }
 .viewer.actual { margin: 0; }
 .viewer.actual canvas { max-width: none; }
 .viewer canvas.panning { cursor: grabbing; }
+/* A finger on the image belongs to the tool. Without this the browser takes the gesture for a scroll a few
+   pixels in, cancels it, and the divider stops where the finger was. In the page a vertical swipe still
+   scrolls the page; over the whole window, or at 100% where the tool pans, nothing is left to the browser. */
+.viewer canvas { touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+body.editing .viewer canvas,
+.viewer.actual canvas { touch-action: none; }
 
 .busy {
   position: absolute;

@@ -89,6 +89,17 @@ once. The folder's Content-Security-Policy is the site's own with `'wasm-unsafe-
 so the site's fonts, analytics and maps keep working on that page — it has to be kept in step with the
 site's root `.htaccess`.
 
+The site's page sets `<base href="/">`, because its header and footer link relative to the root. So the
+tool never resolves one of its own files against the document: the stylesheet and script carry absolute
+`/darkroom/` paths, and everything the script loads — the worker, the effects, the example image — goes
+through `import.meta.url`. A plain `fetch('sample.jpg')` would ask the site's root for it.
+
+By touch the image belongs to the tool. The canvas sets `touch-action: pan-y` in the page, so a vertical
+swipe still scrolls it while a sideways one moves the divider, and `none` over the whole window and at 100%,
+where the tool pans; without it the browser claims the gesture as a scroll a few pixels in and cancels it.
+A finger catches the divider within 36 px (a cursor within 16), and holding for the original waits 180 ms,
+so a finger on its way to scrolling does not flash it.
+
 `python3 scripts/build-web.py` compiles `FinishPixels.c` and `web/wasm/darkroom.c` to WebAssembly with
 Emscripten and assembles `build/web`: an HTML page, its script and style, `darkroom.wasm` (about 20 KB) and
 an example image. Nothing runs on the server, so publishing is a copy of that folder into any directory that

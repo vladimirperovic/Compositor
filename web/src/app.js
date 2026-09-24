@@ -804,9 +804,14 @@ function wire() {
     return Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
   };
   let panning = null;
+  // A fingertip is far less exact than a cursor, so the divider is easier to catch by touch.
+  const reach = event => event.pointerType === 'mouse' ? 16 : 36;
+  // By touch the original waits a moment: a finger that only passes over the image on its way to scrolling
+  // the page should not flash it.
+  let holdTimer = 0;
   canvas.addEventListener('pointerdown', event => {
     const box = canvas.getBoundingClientRect();
-    if (state.split && Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < 16) {
+    if (state.split && Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < reach(event)) {
       dragging = true;
       canvas.setPointerCapture(event.pointerId);
     } else if (state.zoom === 'actual') {
@@ -814,8 +819,10 @@ function wire() {
       panning = { x: event.clientX, y: event.clientY, left: stage.scrollLeft, top: stage.scrollTop };
       canvas.setPointerCapture(event.pointerId);
       canvas.classList.add('panning');
-    } else {
+    } else if (event.pointerType === 'mouse') {
       hold(true);
+    } else {
+      holdTimer = setTimeout(() => hold(true), 180);
     }
     event.preventDefault();
   });
@@ -828,11 +835,12 @@ function wire() {
     }
     if (dragging) { state.splitAt = position(event); paint(); return; }
     const box = canvas.getBoundingClientRect();
-    const onDivider = state.split && Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < 16;
+    const onDivider = state.split && Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < reach(event);
     canvas.style.cursor = onDivider ? 'ew-resize' : state.zoom === 'actual' ? 'grab' : 'default';
   });
   for (const event of ['pointerup', 'pointercancel', 'pointerleave']) {
     canvas.addEventListener(event, () => {
+      clearTimeout(holdTimer);
       dragging = false;
       panning = null;
       canvas.classList.remove('panning');

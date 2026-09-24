@@ -48,7 +48,7 @@ POLICY = (
     "frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests"
 )
 
-HTACCESS = f"""# Darkroom — static files only, no PHP. Written by scripts/build-web.py; edits here are overwritten.
+HTACCESS = f"""# Darkroom. Written by scripts/build-web.py; edits here are overwritten. The site's index.php is its own.
 AddType application/wasm .wasm
 # index.php first: a page that brings the site's header and footer takes precedence over the standalone one.
 DirectoryIndex index.php index.html
