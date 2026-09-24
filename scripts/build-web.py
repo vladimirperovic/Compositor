@@ -208,18 +208,33 @@ def build(debug=False):
     return version
 
 
+MANIFEST = ".darkroom-build"
+
+
 def publish(target):
-    """Copies the build into a folder a web server serves, or a repository behind one."""
+    """Copies the build into a folder a web server serves, or a repository behind one.
+
+    Only files an earlier build of ours put there are ever removed — the folder is also where a site keeps
+    its own index.php, and deleting that would take the page down.
+    """
     target = Path(target).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
     built = {p.name for p in OUT.iterdir() if p.is_file()}
-    stale = [p for p in target.iterdir() if p.is_file() and p.name not in built]
-    for path in stale:
-        path.unlink()
+    previous = set()
+    record = target / MANIFEST
+    if record.exists():
+        previous = {line.strip() for line in record.read_text().splitlines() if line.strip()}
+    stale = sorted(previous - built)
+    for name in stale:
+        (target / name).unlink(missing_ok=True)
     for name in sorted(built):
         shutil.copy2(OUT / name, target / name)
+    record.write_text("\n".join(sorted(built)) + "\n")
+    theirs = sorted(p.name for p in target.iterdir()
+                    if p.is_file() and p.name not in built and p.name != MANIFEST)
     left = f", removed {len(stale)} left by an older build" if stale else ""
-    print(f"\nPublished {len(built)} files to {target}{left}")
+    kept = f", left {', '.join(theirs)} alone" if theirs else ""
+    print(f"\nPublished {len(built)} files to {target}{left}{kept}")
 
 
 def main():

@@ -322,6 +322,18 @@ int main(void) {
         for (size_t i=0;i<made;++i)
             assert(finish_apply_stack(stepwise,W,H,STRIDE,W,H,0,0,&steps[i],1));
         assert(memcmp(stepwise,output,sizeof(output))==0);
+        // Again with Highlight Compensation in the stack: it makes the working planes weighted, which the
+        // effects beside it then share, so one call and one call per step must still agree exactly.
+        FinishEffectSettings mixed[]={{17,1,.6f,.5f,.6f,9,0,0,0,0,0,0,1,0,0,0},
+                                      {4,.5f,0,0,0,7,0,0,0,0,0,0,1,0,0,0},
+                                      {0,.7f,.3f,.5f,.2f,5,0,0,0,0,0,0,1,0,0,0}};
+        memcpy(output,original,sizeof(output));
+        assert(finish_apply_stack(output,W,H,STRIDE,W,H,0,0,mixed,3));
+        made = finish_expand_stack(mixed,3,steps,32);
+        memcpy(stepwise,original,sizeof(stepwise));
+        for (size_t i=0;i<made;++i)
+            assert(finish_apply_stack(stepwise,W,H,STRIDE,W,H,0,0,&steps[i],1));
+        assert(memcmp(stepwise,output,sizeof(output))==0);
     }
     // An unknown kind and a malformed scale are refused, and neither reaches anywhere.
     FinishEffectSettings unknown={18,1,0,0,0,1,0,0,0,0,0,0,1,0,0,0}, bad_scale={15,1,0,0,0,1,0,0,0,0,0,0,NAN,0,0,0};

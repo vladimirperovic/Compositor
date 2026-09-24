@@ -88,11 +88,16 @@ function ask(worker, message, transfer = []) {
   });
 }
 
-const stacks = new Map();   // stack signature → the steps it really runs, and each step's reach
+// Stack signature → the steps it really runs, and each step's reach. A slider passing through a hundred
+// values leaves a hundred of these behind, so the oldest are dropped; they are cheap to ask for again.
+const stacks = new Map();
 
 async function stagesFor(values) {
   const key = String(values);
-  if (!stacks.has(key)) stacks.set(key, await ask(pool[0], { op: 'expand', values }));
+  if (!stacks.has(key)) {
+    stacks.set(key, await ask(pool[0], { op: 'expand', values }));
+    for (const old of [...stacks.keys()].slice(0, -64)) stacks.delete(old);
+  }
   return stacks.get(key);
 }
 
@@ -250,6 +255,22 @@ function viewBox() {
 
 const pixelRatio = () => Math.min(2, window.devicePixelRatio || 1);
 
+/// A canvas to work on out of sight. OffscreenCanvas where there is one, and a plain detached canvas
+/// where there is not — Safari only got OffscreenCanvas in 16.4, and nothing here needs more than a 2D
+/// context and a way out to a file.
+function scratchCanvas(width, height) {
+  if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(width, height);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+const toBlob = (canvas, type, quality) => (canvas.convertToBlob
+  ? canvas.convertToBlob({ type, quality })
+  : new Promise((resolve, reject) => canvas.toBlob(
+      blob => (blob ? resolve(blob) : reject(new Error('This image could not be encoded.'))), type, quality)));
+
 /// Whether either panel is scrolled short of its end, so the chevron can say there is more.
 function scrollHints() {
   for (const id of ['panel', 'inspector']) {
@@ -298,14 +319,14 @@ function buildPreview() {
   if (width * height * scale * scale > PREVIEW_LIMIT) scale = Math.sqrt(PREVIEW_LIMIT / (width * height));
   const w = Math.max(1, Math.round(width * scale));
   const h = Math.max(1, Math.round(height * scale));
-  const scratch = new OffscreenCanvas(w, h);
+  const scratch = scratchCanvas(w, h);
   const paint = scratch.getContext('2d', { willReadFrequently: true });
   const whole = new ImageData(state.source.data, width, height);
   if (w === width && h === height) {
     paint.putImageData(whole, 0, 0);
   } else {
     // Downscaling needs drawImage, and drawImage needs a canvas to read from.
-    const full = new OffscreenCanvas(width, height);
+    const full = scratchCanvas(width, height);
     full.getContext('2d').putImageData(whole, 0, 0);
     paint.imageSmoothingQuality = 'high';
     paint.drawImage(full, 0, 0, w, h);
@@ -318,7 +339,7 @@ function buildPreview() {
   // and the full preview comes back the moment the slider is let go.
   const dw = Math.max(1, Math.round(w / 2));
   const dh = Math.max(1, Math.round(h / 2));
-  const small = new OffscreenCanvas(dw, dh);
+  const small = scratchCanvas(dw, dh);
   const drawn = small.getContext('2d', { willReadFrequently: true });
   drawn.imageSmoothingQuality = 'high';
   drawn.drawImage(scratch, 0, 0, dw, dh);
@@ -654,8 +675,16 @@ function buildPresets() {
 
 async function open(file) {
   if (!file) return;
+  try {
+    await read(file);
+  } catch (error) {
+    report(0, `${file.name} could not be opened — is it an image this browser can read?`);
+  }
+}
+
+async function read(file) {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const scratch = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const scratch = scratchCanvas(bitmap.width, bitmap.height);
   const paint = scratch.getContext('2d', { willReadFrequently: true });
   paint.drawImage(bitmap, 0, 0);
   bitmap.close();
@@ -702,11 +731,11 @@ async function save() {
     if (!state.fullResult || state.fullResult.signature !== key) {
       state.fullResult = { signature: key, data: await process(state.source.data, width, height, 1) };
     }
-    const out = new OffscreenCanvas(width, height);
+    const out = scratchCanvas(width, height);
     out.getContext('2d').putImageData(new ImageData(state.fullResult.data, width, height), 0, 0);
     const type = el('format').value;
     const quality = Number(el('quality').value) / 100;
-    const blob = await out.convertToBlob({ type, quality });
+    const blob = await toBlob(out, type, quality);
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `darkroom.${type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png'}`;
@@ -839,7 +868,9 @@ function wire() {
 
   addEventListener('keydown', event => {
     if (event.key === 'Escape' && document.body.classList.contains('editing')) leave();
-    if (event.key === 'Tab' && state.source) {
+    // Tab still moves between controls when one of them has the focus; it only puts the panels away
+    // when the keyboard is not being used to navigate them.
+    if (event.key === 'Tab' && state.source && !event.target.closest?.('.toolbar, .sheet')) {
       event.preventDefault();
       panels(document.body.classList.contains('panel-hidden'));
     }

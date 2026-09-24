@@ -134,6 +134,22 @@ struct RenderFinishTests {
         let decoded = try JSONDecoder().decode(RenderFinishSettings.self, from: JSONSerialization.data(withJSONObject: older))
         #expect(!decoded[.vignette].enabled && decoded[.ink].palette == 3)
         for preset in RenderFinishPresets.builtIn { #expect(!preset.settings.isIdentity) }
+
+        // Three-Way Color's second axis is stored per range, and a preset saved without it still loads.
+        var wheels = RenderFinishSettings()
+        wheels[.threeWayColor].enabled = true
+        wheels[.threeWayColor].tintShadows = -40
+        wheels[.threeWayColor].tintHighlights = 25
+        wheels[.highlightCompensation].enabled = true
+        let coded = try JSONDecoder().decode(RenderFinishSettings.self, from: JSONEncoder().encode(wheels))
+        #expect(coded[.threeWayColor].tintShadows == -40 && coded[.threeWayColor].tintHighlights == 25)
+        #expect(coded[.highlightCompensation].enabled)
+        var withoutTints = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(wheels))
+            as? [String: [String: Any]])
+        withoutTints["threeWayColor"]?.removeValue(forKey: "tintShadows")
+        let loaded = try JSONDecoder().decode(RenderFinishSettings.self,
+                                              from: JSONSerialization.data(withJSONObject: withoutTints))
+        #expect(loaded[.threeWayColor].tintShadows == 0 && loaded[.threeWayColor].tintHighlights == 25)
     }
 
     @Test func mergedVisibleAddsAStampOnTopInOneUndoStep() async throws {
