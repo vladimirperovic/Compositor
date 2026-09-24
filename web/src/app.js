@@ -744,11 +744,16 @@ function buildPresets() {
 
 // Opening, cropping, saving ---------------------------------------------
 
-async function open(file) {
+/// `chosen`: the visitor picked or dropped this image, so it is there to be worked on and opens in the
+/// editing view even inside a page. The example that loads by itself waits in the page until asked for.
+async function open(file, chosen = false) {
   if (!file) return;
+  const before = takeWindow;
+  if (chosen) takeWindow = true;
   try {
     await read(file);
   } catch (error) {
+    takeWindow = before;
     report(0, `${file.name} could not be opened — is it an image this browser can read?`);
   }
 }
@@ -1028,7 +1033,7 @@ function wire() {
   el('pick').addEventListener('click', () => el('file').click());
   el('open').addEventListener('click', () => el('file').click());
 
-  el('file').addEventListener('change', event => open(event.target.files[0]));
+  el('file').addEventListener('change', event => { open(event.target.files[0], true); event.target.value = ''; });
   el('example').addEventListener('click', loadExample);
 
   const stage = el('stage');
@@ -1037,7 +1042,7 @@ function wire() {
   stage.addEventListener('drop', event => {
     event.preventDefault();
     stage.classList.remove('dragging');
-    open(event.dataTransfer.files[0]);
+    open(event.dataTransfer.files[0], true);
   });
 
   const panels = shown => {
