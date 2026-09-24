@@ -17,7 +17,10 @@ const state = {
   settings: freshSettings(),
   selected: 0,
   seed: (Math.random() * 1e9) | 0,
-  zoom: 'fit',
+  zoom: 'fit',         // 'fit', or 'actual': drawn at `scale` screen points per image pixel
+  scale: 1,            // 1 is 100%; the wheel takes it from the fit up to MAX_SCALE (300%)
+  fileSize: 0,         // bytes of the file that was opened, for the size beside Save
+  encoded: null,       // { key, blob } the last file written or estimated, so Save does not encode twice
   cropping: false,
   cropRect: null,
   draft: null,         // half-size preview, used while a slider is moving
@@ -273,7 +276,7 @@ const toBlob = (canvas, type, quality) => (canvas.convertToBlob
 
 /// Whether either panel is scrolled short of its end, so the chevron can say there is more.
 function scrollHints() {
-  for (const id of ['panel', 'inspector']) {
+  for (const id of ['panel', 'inspectorScroll']) {
     const box = el(id);
     box.classList.toggle('has-more', box.scrollHeight - box.scrollTop - box.clientHeight > 4);
   }
@@ -293,6 +296,10 @@ if (takeWindow) history.replaceState(history.state, '', location.pathname + loca
 /// and gives the page back, with one button to step into it again.
 function enterEditing() {
   document.body.classList.add('editing');
+  // `overflow: hidden` on the body stops the page behind only while the root element leaves overflow
+  // alone; a site that sets overflow-x on <html> keeps its own scrollbar, and the wheel scrolled the page
+  // under the tool. The root is held still for as long as the tool has the window.
+  document.documentElement.style.overflow = 'hidden';
   el('leave').querySelector('span').textContent = 'Close';
   // On a phone the sheet would cover the picture, so it starts out of the way behind its own button.
   const away = window.innerWidth <= 1080;
@@ -305,6 +312,7 @@ function enterEditing() {
 
 function leave() {
   document.body.classList.remove('editing');
+  document.documentElement.style.overflow = '';
   el('leave').querySelector('span').textContent = 'Edit image';
   measureChrome();
   if (state.source) { buildPreview(); schedule(); }
@@ -358,16 +366,21 @@ function show(data, width, height, region = null) {
   paint();
 }
 
-/// The part of the image on screen at 100%, with the margin the stack reads around it — or nothing when
-/// the whole image is barely bigger than that, in which case processing all of it is the simpler job.
+/// The part of the image on screen when zoomed, with the margin the stack reads around it — or nothing when
+/// the whole image is barely bigger than that, in which case processing all of it is the simpler job. It is
+/// read off where the canvas and the stage actually are, so the scale, the centring and the room kept clear
+/// of the panels all come out right without being worked out again here.
 async function visiblePiece() {
   const stage = el('stage');
   const { width, height } = state.source;
   const margin = await totalReach(1);
-  const x = Math.max(0, Math.floor(stage.scrollLeft) - margin);
-  const y = Math.max(0, Math.floor(stage.scrollTop) - margin);
-  const right = Math.min(width, Math.ceil(stage.scrollLeft + stage.clientWidth) + margin);
-  const bottom = Math.min(height, Math.ceil(stage.scrollTop + stage.clientHeight) + margin);
+  const view = stage.getBoundingClientRect();
+  const box = canvas.getBoundingClientRect();
+  const per = box.width / width || 1;
+  const x = Math.max(0, Math.floor((view.left - box.left) / per) - margin);
+  const y = Math.max(0, Math.floor((view.top - box.top) / per) - margin);
+  const right = Math.min(width, Math.ceil((view.right - box.left) / per) + margin);
+  const bottom = Math.min(height, Math.ceil((view.bottom - box.top) / per) + margin);
   const w = right - x;
   const h = bottom - y;
   if (w <= 0 || h <= 0 || w * h * 1.6 > width * height) return null;
@@ -379,11 +392,61 @@ async function visiblePiece() {
   return { data, x, y, w, h };
 }
 
-/// How wide the image is drawn: filling the room it has, or one image pixel per point at 100%.
+/// How wide the image is drawn: filling the room it has, or `scale` points per image pixel when zoomed.
 function displayWidth(width, height) {
-  if (state.zoom === 'actual') return width;
+  if (state.zoom === 'actual') return Math.max(1, Math.round(state.source.width * state.scale));
   const box = viewBox();
   return Math.round(Math.min(box.w, box.h * (width / height)));
+}
+
+const MAX_SCALE = 3;   // 300%: past that the wheel shows single pixels, not the picture
+
+/// The scale at which the whole image fits — measured as the stage is when it is not zoomed, since zoomed
+/// it keeps room clear of the panels that the fit does not.
+function fitScale() {
+  const stage = el('stage');
+  const zoomed = stage.classList.contains('actual');
+  // Measured without the zoom's padding the scrolled area is smaller for a moment, and the browser cuts
+  // the scroll position down to it — so the position is put back once the padding is.
+  const left = stage.scrollLeft;
+  const top = stage.scrollTop;
+  if (zoomed) stage.classList.remove('actual');
+  const box = viewBox();
+  if (zoomed) {
+    stage.classList.add('actual');
+    stage.scrollLeft = left;
+    stage.scrollTop = top;
+  }
+  const { width, height } = state.source;
+  return Math.min(box.w, box.h * (width / height)) / width;
+}
+
+/// Zooms to `scale` (1 is 100%) or back to 'fit'. The point of the image under `anchor` — the cursor, or
+/// the middle of the view — stays under it, so zooming reads as moving closer to that spot.
+function setZoom(scale, anchor = null) {
+  if (!state.source) return;
+  const stage = el('stage');
+  const view = stage.getBoundingClientRect();
+  const at = anchor || { x: view.left + view.width / 2, y: view.top + view.height / 2 };
+  const before = canvas.getBoundingClientRect();
+  const fx = before.width ? (at.x - before.left) / before.width : 0.5;
+  const fy = before.height ? (at.y - before.top) / before.height : 0.5;
+  const zoomed = scale !== 'fit';
+  state.zoom = zoomed ? 'actual' : 'fit';
+  if (zoomed) state.scale = Math.min(MAX_SCALE, Math.max(0.01, scale));
+  el('zoom').textContent = zoomed ? 'Fit' : '100%';
+  el('zoom').title = zoomed ? 'Fit the whole image (the wheel zooms)' : 'One image pixel per screen point (the wheel zooms)';
+  el('viewer').classList.toggle('actual', zoomed);
+  stage.classList.toggle('actual', zoomed);
+  // Past 200% the pixels are what is being looked at, so they are drawn as squares, not blurred together.
+  canvas.style.imageRendering = zoomed && state.scale >= 2 ? 'pixelated' : '';
+  canvas.style.width = `${displayWidth(state.source.width, state.source.height)}px`;
+  if (zoomed) {
+    const after = canvas.getBoundingClientRect();
+    stage.scrollLeft += after.left + fx * after.width - at.x;
+    stage.scrollTop += after.top + fy * after.height - at.y;
+  }
+  report(0);
 }
 
 /// Draws the last filtered frame, and — held or split — the untouched image beside it. No filtering here,
@@ -510,6 +573,8 @@ async function run() {
       show(data, image.width, image.height);
     }
     report(performance.now() - started);
+    renderLoupe();
+    sizes();
   } catch (error) {
     report(0, error.message);
   } finally {
@@ -522,7 +587,7 @@ async function run() {
 function report(ms, error) {
   const { width, height } = state.source || { width: 0, height: 0 };
   const size = `${width} × ${height}`;
-  const shown = state.zoom === 'actual' ? '100%' : `${Math.round(state.previewScale * 100)}% preview`;
+  const shown = state.zoom === 'actual' ? `${Math.round(state.scale * 100)}%` : `${Math.round(state.previewScale * 100)}% preview`;
   el('status').textContent = error ? error : `${size} · ${shown} · ${ms.toFixed(0)} ms`;
 }
 
@@ -695,13 +760,25 @@ async function read(file) {
   paint.drawImage(bitmap, 0, 0);
   bitmap.close();
   const image = paint.getImageData(0, 0, scratch.width, scratch.height);
+  state.fileSize = file.size;
   adopt({ width: image.width, height: image.height, data: image.data });
 }
 
 function adopt(source) {
   state.source = source;
   state.fullResult = null;
+  state.encoded = null;
   state.opaque = isOpaque(source.data);
+  loupe.focus = null;
+  loupe.key = '';
+  // A new picture, or a crop, starts whole in view rather than at the old zoom and scroll.
+  if (state.zoom === 'actual') {
+    state.zoom = 'fit';
+    el('zoom').textContent = '100%';
+    el('viewer').classList.remove('actual');
+    el('stage').classList.remove('actual');
+    canvas.style.imageRendering = '';
+  }
   el('dropzone').hidden = true;
   el('viewer').hidden = false;
   el('leave').hidden = false;
@@ -734,26 +811,215 @@ async function save() {
   el('busy').hidden = false;
   await beforeWork();
   try {
-    const key = signature(1);
-    if (!state.fullResult || state.fullResult.signature !== key) {
-      state.fullResult = { signature: key, data: await process(state.source.data, width, height, 1) };
-    }
-    const out = scratchCanvas(width, height);
-    out.getContext('2d').putImageData(new ImageData(state.fullResult.data, width, height), 0, 0);
     const type = el('format').value;
-    const quality = Number(el('quality').value) / 100;
-    const blob = await toBlob(out, type, quality);
+    const blob = await encodeFull();
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `darkroom.${type === 'image/jpeg' ? 'jpg' : type === 'image/webp' ? 'webp' : 'png'}`;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 4000);
-    report(0, `Saved ${width} × ${height} · ${(blob.size / 1048576).toFixed(1)} MB`);
+    report(0, `Saved ${width} × ${height} · ${bytes(blob.size)}`);
+    sizes();
   } catch (error) {
     report(0, error.message);
   } finally {
     el('busy').hidden = true;
   }
+}
+
+const bytes = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/// What Save would write: the filters at full resolution, in the chosen format and quality. PNG has no
+/// quality, so moving the slider does not make it a different file.
+function encodeKey() {
+  const type = el('format').value;
+  return `${signature(1)}|${type}|${type === 'image/png' ? '' : el('quality').value}`;
+}
+
+/// The saved file, made once per stack, format and quality and kept — the size beside Save is this very
+/// file, and Save right after it only hands it over.
+async function encodeFull() {
+  const source = state.source;
+  const { width, height } = source;
+  const key = encodeKey();
+  if (state.encoded && state.encoded.key === key) return state.encoded.blob;
+  const full = signature(1);
+  let result = state.fullResult && state.fullResult.signature === full ? state.fullResult.data : null;
+  if (!result) {
+    result = await process(source.data, width, height, 1);
+    if (state.source === source) state.fullResult = { signature: full, data: result };
+  }
+  const out = scratchCanvas(width, height);
+  out.getContext('2d').putImageData(new ImageData(result, width, height), 0, 0);
+  const type = el('format').value;
+  const blob = await toBlob(out, type, Number(el('quality').value) / 100);
+  if (state.source === source) state.encoded = { key, blob };
+  return blob;
+}
+
+/// Beside Save: the size of the file that was opened, and of the file Save will write. The second is made
+/// when the page has been still for a moment — filtering the whole image is real work — and on a very large
+/// image only when the format or the quality is touched.
+let sizeTimer = 0;
+let sizeTicket = 0;
+function sizes(delay = 800, asked = false) {
+  const out = el('sizes');
+  clearTimeout(sizeTimer);
+  if (!state.source) { out.textContent = ''; return; }
+  const original = state.fileSize ? `<span class="long">Original </span>${bytes(state.fileSize)}` : '';
+  const known = state.encoded && state.encoded.key === encodeKey() ? state.encoded.blob.size : null;
+  const huge = state.source.width * state.source.height > 40e6;
+  const saved = known !== null ? bytes(known) : huge && !asked ? '' : '…';
+  out.innerHTML = original + (saved ? `${original ? ' → ' : ''}<span class="long">saved </span><b>${saved}</b>` : '');
+  if (known !== null || (huge && !asked)) return;
+  const ticket = ++sizeTicket;
+  sizeTimer = setTimeout(async () => {
+    if (ticket !== sizeTicket || !state.source) return;
+    if (rendering || state.cropping) { sizes(400, asked); return; }
+    try {
+      await encodeFull();
+      if (ticket === sizeTicket) sizes(800, asked);
+    } catch {
+      if (ticket === sizeTicket) out.innerHTML = original;
+    }
+  }, delay);
+}
+
+// The loupe -------------------------------------------------------------
+
+/// Under the settings, a piece of the image at 100% — as much as fits there — so what a filter does to
+/// grain and edges can be judged while the whole picture stays in view. It shows the same before / after
+/// as the stage, with a divider of its own; dragging it looks around, and a click on the picture moves it
+/// there. A frame on the picture says where it is looking.
+const loupe = { focus: null, key: '', busy: false, again: false, piece: null, splitAt: 0.5 };
+
+function loupeShown() {
+  return !!state.source && document.body.classList.contains('editing') && el('loupe').offsetParent !== null;
+}
+
+/// The piece at the loupe's size around the focus, kept inside the image.
+function loupeRect() {
+  const box = el('loupe');
+  const { width, height } = state.source;
+  const w = Math.max(1, Math.min(width, Math.floor(box.clientWidth)));
+  const h = Math.max(1, Math.min(height, Math.floor(box.clientHeight)));
+  const focus = loupe.focus || { x: width / 2, y: height / 2 };
+  const x = Math.round(Math.min(Math.max(0, focus.x - w / 2), width - w));
+  const y = Math.round(Math.min(Math.max(0, focus.y - h / 2), height - h));
+  return { x, y, w, h };
+}
+
+async function renderLoupe() {
+  if (!loupeShown()) { el('loupeMark').hidden = true; return; }
+  if (loupe.busy) { loupe.again = true; return; }
+  const source = state.source;
+  const rect = loupeRect();
+  const key = `${signature(1)}|${rect.x},${rect.y},${rect.w},${rect.h}`;
+  markLoupe(rect);
+  if (key === loupe.key && loupe.piece) { paintLoupe(); return; }
+  loupe.busy = true;
+  try {
+    const { width, height } = source;
+    // The margin the stack reads around the piece, so its edges come out as they would in the whole.
+    const margin = await totalReach(1);
+    const px = Math.max(0, rect.x - margin);
+    const py = Math.max(0, rect.y - margin);
+    const pw = Math.min(width, rect.x + rect.w + margin) - px;
+    const ph = Math.min(height, rect.y + rect.h + margin) - py;
+    const raw = new Uint8ClampedArray(pw * ph * 4);
+    for (let line = 0; line < ph; line += 1) {
+      const from = ((py + line) * width + px) * 4;
+      raw.set(source.data.subarray(from, from + pw * 4), line * pw * 4);
+    }
+    const done = await process(raw, pw, ph, 1, null, { x: px, y: py, fullWidth: width, fullHeight: height });
+    if (state.source !== source) return;
+    loupe.piece = { ...rect, px, py, pw, ph, raw, done };
+    loupe.key = key;
+    paintLoupe();
+  } catch {
+    // The loupe is a view; the stage reports what went wrong.
+  } finally {
+    loupe.busy = false;
+    if (loupe.again) { loupe.again = false; renderLoupe(); }
+  }
+}
+
+function paintLoupe() {
+  const p = loupe.piece;
+  if (!p) return;
+  const view = el('loupeCanvas');
+  if (view.width !== p.w || view.height !== p.h) {
+    view.width = p.w;
+    view.height = p.h;
+    view.style.width = `${p.w}px`;
+    view.style.height = `${p.h}px`;
+  }
+  const draw = view.getContext('2d');
+  const dx = p.x - p.px;
+  const dy = p.y - p.py;
+  draw.putImageData(new ImageData(state.holding ? p.raw : p.done, p.pw, p.ph), -dx, -dy, dx, dy, p.w, p.h);
+  if (state.holding || !state.split) return;
+  const cut = Math.round(p.w * loupe.splitAt);
+  if (cut > 0) draw.putImageData(new ImageData(p.raw, p.pw, p.ph), -dx, -dy, dx, dy, cut, p.h);
+  draw.fillStyle = 'rgba(14, 14, 16, .35)';
+  draw.fillRect(cut - 2.5, 0, 5, p.h);
+  draw.fillStyle = 'rgba(245, 241, 234, .95)';
+  draw.fillRect(cut - 1, 0, 2, p.h);
+  draw.beginPath();
+  draw.arc(cut, p.h / 2, 7, 0, Math.PI * 2);
+  draw.fill();
+}
+
+/// The frame on the picture: where the loupe is looking, in fractions of the image so it follows any size.
+function markLoupe(rect) {
+  const mark = el('loupeMark');
+  const { width, height } = state.source;
+  mark.hidden = state.zoom === 'actual';
+  mark.style.left = `${(rect.x / width) * 100}%`;
+  mark.style.top = `${(rect.y / height) * 100}%`;
+  mark.style.width = `${(rect.w / width) * 100}%`;
+  mark.style.height = `${(rect.h / height) * 100}%`;
+}
+
+function wireLoupe() {
+  const box = el('loupe');
+  const view = el('loupeCanvas');
+  let drag = null;
+  const onDivider = event => {
+    if (!state.split || !loupe.piece) return false;
+    const r = view.getBoundingClientRect();
+    return Math.abs(event.clientX - (r.left + r.width * loupe.splitAt)) < (event.pointerType === 'mouse' ? 12 : 30);
+  };
+  box.addEventListener('pointerdown', event => {
+    if (!state.source || event.button !== 0) return;
+    const rect = loupeRect();
+    drag = onDivider(event)
+      ? { divider: true }
+      : { x: event.clientX, y: event.clientY, focus: { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } };
+    box.setPointerCapture(event.pointerId);
+    box.classList.toggle('looking', !drag.divider);
+    event.preventDefault();
+  });
+  box.addEventListener('pointermove', event => {
+    if (!drag) {
+      box.style.cursor = onDivider(event) ? 'ew-resize' : '';
+      return;
+    }
+    if (drag.divider) {
+      const r = view.getBoundingClientRect();
+      loupe.splitAt = Math.min(1, Math.max(0, (event.clientX - r.left) / r.width));
+      paintLoupe();
+      return;
+    }
+    // One image pixel per point in the loupe, so the picture moves exactly with the pointer.
+    loupe.focus = { x: drag.focus.x - (event.clientX - drag.x), y: drag.focus.y - (event.clientY - drag.y) };
+    renderLoupe();
+  });
+  for (const type of ['pointerup', 'pointercancel']) {
+    box.addEventListener(type, () => { drag = null; box.classList.remove('looking'); });
+  }
+  // The room it has changes with the filter chosen (more or fewer settings above it) and with the window.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => renderLoupe()).observe(box);
 }
 
 // Wiring ----------------------------------------------------------------
@@ -787,12 +1053,14 @@ function wire() {
     state.split = !state.split;
     compare.classList.toggle('active', state.split);
     paint();
+    paintLoupe();
   });
 
   const hold = on => {
     if (state.holding === on) return;
     state.holding = on;
     paint();
+    paintLoupe();
   };
   addEventListener('keydown', event => { if (event.key === 'b' && !event.repeat) hold(true); });
   addEventListener('keyup', event => { if (event.key === 'b') hold(false); });
@@ -816,6 +1084,14 @@ function wire() {
   // By touch the original waits a moment: a finger that only passes over the image on its way to scrolling
   // the page should not flash it.
   let holdTimer = 0;
+  // A press on the picture also sends the loupe there.
+  const lookAt = event => {
+    if (!loupeShown()) return;
+    const box = canvas.getBoundingClientRect();
+    loupe.focus = { x: ((event.clientX - box.left) / box.width) * state.source.width,
+                    y: ((event.clientY - box.top) / box.height) * state.source.height };
+    renderLoupe();
+  };
   canvas.addEventListener('pointerdown', event => {
     const box = canvas.getBoundingClientRect();
     if (state.split && Math.abs(event.clientX - (box.left + box.width * state.splitAt)) < reach(event)) {
@@ -828,8 +1104,10 @@ function wire() {
       canvas.classList.add('panning');
     } else if (event.pointerType === 'mouse') {
       hold(true);
+      lookAt(event);
     } else {
       holdTimer = setTimeout(() => hold(true), 180);
+      lookAt(event);
     }
     event.preventDefault();
   });
@@ -856,12 +1134,54 @@ function wire() {
   }
 
   el('zoom').addEventListener('click', () => {
-    state.zoom = state.zoom === 'fit' ? 'actual' : 'fit';
-    el('zoom').textContent = state.zoom === 'fit' ? '100%' : 'Fit';
-    el('viewer').classList.toggle('actual', state.zoom === 'actual');
-    el('stage').classList.toggle('actual', state.zoom === 'actual');
+    setZoom(state.zoom === 'fit' ? 1 : 'fit');
     schedule();
   });
+
+  // The wheel zooms around the cursor, from the fit up to 300%, in steps that feel the same at any size;
+  // a trackpad pinch arrives as a wheel with ctrlKey and zooms the same way. In the editing view nothing
+  // behind the tool scrolls. In the page the wheel still scrolls the page, and only a pinch zooms.
+  let settle = 0;
+  stage.addEventListener('wheel', event => {
+    if (!state.source || state.cropping) return;
+    const editing = document.body.classList.contains('editing');
+    if (!editing && !event.ctrlKey) return;
+    event.preventDefault();
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1);
+    if (!delta) return;
+    const fit = fitScale();
+    const from = state.zoom === 'actual' ? state.scale : fit;
+    let to = from * Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.0015));
+    to = Math.min(MAX_SCALE, to);
+    // Coming back out, the fit is a stop of its own: the whole picture again, not a scale near it.
+    const done = to <= fit * 1.001 && (state.zoom === 'fit' || from > fit * 1.001 || to < Math.min(fit, 1));
+    if (done && state.zoom === 'fit') return;
+    if (!done && Math.abs(to - from) < 0.0005) return;
+    setZoom(done ? 'fit' : to, { x: event.clientX, y: event.clientY });
+    // The canvas follows every step at once, stretched; the filters catch up when the wheel rests.
+    clearTimeout(settle);
+    settle = setTimeout(() => schedule(), 160);
+  }, { passive: false });
+
+  // Zoomed, the picture can be dragged from anywhere on the stage — also from the dark room around it,
+  // which is what is left to hold when the image is pushed out from under a panel.
+  let sliding = null;
+  stage.addEventListener('pointerdown', event => {
+    if (state.zoom !== 'actual' || state.cropping || event.target === canvas || event.button !== 0) return;
+    if (event.target.closest('.crop-overlay, .dropzone, button, a, input, select')) return;
+    sliding = { x: event.clientX, y: event.clientY, left: stage.scrollLeft, top: stage.scrollTop };
+    stage.setPointerCapture(event.pointerId);
+    stage.classList.add('sliding');
+    event.preventDefault();
+  });
+  stage.addEventListener('pointermove', event => {
+    if (!sliding) return;
+    stage.scrollLeft = sliding.left - (event.clientX - sliding.x);
+    stage.scrollTop = sliding.top - (event.clientY - sliding.y);
+  });
+  for (const type of ['pointerup', 'pointercancel']) {
+    stage.addEventListener(type, () => { sliding = null; stage.classList.remove('sliding'); });
+  }
 
   el('reset').addEventListener('click', () => {
     state.settings = freshSettings();
@@ -872,8 +1192,12 @@ function wire() {
 
   el('format').addEventListener('change', () => {
     el('qualityWrap').style.visibility = el('format').value === 'image/png' ? 'hidden' : 'visible';
+    sizes(150, true);
   });
-  el('quality').addEventListener('input', () => { el('qualityValue').textContent = el('quality').value; });
+  el('quality').addEventListener('input', () => {
+    el('qualityValue').textContent = el('quality').value;
+    sizes(250, true);
+  });
   el('save').addEventListener('click', save);
 
   el('leave').addEventListener('click', () => {
@@ -891,7 +1215,7 @@ function wire() {
     }
   });
 
-  for (const id of ['panel', 'inspector']) el(id).addEventListener('scroll', scrollHints);
+  for (const id of ['panel', 'inspectorScroll']) el(id).addEventListener('scroll', scrollHints);
 
   let scrolling = null;
   el('stage').addEventListener('scroll', () => {
@@ -901,6 +1225,7 @@ function wire() {
   });
 
   wireCrop();
+  wireLoupe();
   addEventListener('resize', () => {
     measureChrome();
     scrollHints();

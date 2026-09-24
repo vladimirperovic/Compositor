@@ -170,10 +170,15 @@ body:not(.editing) .sheet { display: none; }
 .viewer { position: relative; margin: auto; line-height: 0; }
 .viewer canvas { display: block; max-width: 100%; height: auto; }
 /* Centring an image larger than the window would put its top-left corner out of reach: a flex container
-   cannot be scrolled back past a centred child. At 100% it starts at the corner instead. */
+   cannot be scrolled back past a centred child. Zoomed, it is aligned to the corner and centred by auto
+   margins instead, which centre it along a side where it is smaller than the view and fall to nothing
+   along a side where it is larger — so every edge can still be scrolled to. */
 .stage.actual { align-items: flex-start; justify-content: flex-start; }
-.viewer.actual { margin: 0; }
+.viewer.actual { margin: auto; }
 .viewer.actual canvas { max-width: none; }
+.stage { overscroll-behavior: contain; }
+body.editing .stage.actual { cursor: grab; }
+.stage.sliding { cursor: grabbing; }
 .viewer canvas.panning { cursor: grabbing; }
 /* A finger on the image belongs to the tool. Without this the browser takes the gesture for a scroll a few
    pixels in, cancels it, and the divider stops where the finger was. In the page a vertical swipe still
@@ -287,6 +292,13 @@ body.editing .stage {
   padding: 0;
 }
 
+/* Zoomed, the scrolled area reaches past the floating chrome, so any edge of the picture can be brought out
+   from under the toolbar and the panels; a picture smaller than that room sits in the middle of it. */
+body.editing .stage.actual {
+  padding: calc(var(--toolbar-height) + 16px) calc(var(--panel-width) + 32px) 16px calc(var(--rail-width) + 32px);
+}
+body.editing.panel-hidden .stage.actual { padding: calc(var(--toolbar-height) + 16px) 16px 16px; }
+
 .sheet { display: contents; }
 
 body.editing .panel,
@@ -384,7 +396,7 @@ select option { color: var(--ink); }
 }
 
 .panel.has-more .more,
-.inspector.has-more .more { display: flex; }
+.inspector-scroll.has-more .more { display: flex; }
 
 .more svg { width: 12px; height: 7px; fill: none; stroke: var(--accent-light); stroke-width: 1.4; opacity: .85; }
 
@@ -475,6 +487,38 @@ input[type=range] { width: 100%; accent-color: var(--accent-light); height: 18px
 }
 
 .tools, .save { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* The studio's mark, first in the toolbar, back to the site. */
+.toolbar .brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 8px;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 8px;
+  transition: color .45s var(--ease), opacity .45s var(--ease);
+}
+.toolbar .brand svg { width: 28px; height: 28px; display: block; }
+.toolbar .brand:hover { color: var(--accent-light); }
+/* In the site's page its header already carries the mark; it is needed once the tool has the window. */
+body:not(.editing) #darkroom[data-chrome="page"] .brand { display: none; }
+
+/* Beside Save: the file opened, and the file Save will write. */
+.sizes {
+  font-size: 9.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--glass-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sizes b { font-weight: 500; color: var(--glass-text); letter-spacing: .06em; }
+.sizes:empty { display: none; }
+body:not(.editing) .sizes { color: var(--muted); }
+body:not(.editing) .sizes b { color: var(--ink); }
 
 .toolbar button {
   background: transparent;
@@ -675,4 +719,62 @@ body:not(.editing) .status, body:not(.editing) .quality { color: var(--muted); }
   :root { --sheet-height: 42vh; }
   body.editing .sheet { left: 8px; right: 8px; bottom: 8px; }
   .crop-actions { bottom: 16px; padding: 8px 8px 8px 16px; font-size: 10px; gap: 10px; }
+}
+
+/* The loupe ------------------------------------------------------------ */
+
+/* The inspector is a column: the settings on top, scrolling on their own when they are tall, and under them
+   the loupe, taking whatever height is left but never less than its own — so it is always in view. */
+body.editing .inspector { display: flex; flex-direction: column; overflow: hidden; }
+body.editing .inspector-scroll { flex: 0 1 auto; min-height: 0; overflow: auto; }
+
+.loupe {
+  display: none;
+  position: relative;
+  flex: 1 0 200px;
+  margin: 0 16px 16px;
+  min-height: 200px;
+  overflow: hidden;
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  background: #0e0e10;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+body.editing .loupe { display: block; }
+.loupe.looking { cursor: grabbing; }
+.loupe canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: block; }
+.loupe figcaption {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 10px 7px;
+  font-size: 9px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: rgba(245, 241, 234, .82);
+  background: linear-gradient(transparent, rgba(0, 0, 0, .55));
+  pointer-events: none;
+}
+
+/* On the picture: where the loupe is looking. */
+.loupe-mark {
+  position: absolute;
+  border: 1px solid rgba(245, 241, 234, .9);
+  box-shadow: 0 0 0 1px rgba(14, 14, 16, .45);
+  border-radius: 2px;
+  pointer-events: none;
+}
+body:not(.editing) .loupe-mark { display: none; }
+
+/* On a narrow screen the settings are a sheet over the picture and there is no room for a second view. */
+@media (max-width: 1080px) {
+  body.editing .loupe, .loupe-mark { display: none !important; }
+  body.editing .inspector { display: block; }
+  body.editing .inspector-scroll { overflow: visible; }
+  .sizes .long { display: none; }
 }

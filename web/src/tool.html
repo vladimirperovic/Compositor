@@ -2,6 +2,12 @@
      page, and publishes it as tool.html for a site that brings its own header and footer. -->
 <div class="toolbar" id="toolbar">
   <div class="tools">
+    <a class="brand" href="/" aria-label="Vladimir Perović Architects — home" title="vladimirperovic.com">
+      <svg viewBox="0 0 211 211" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5.5" y="5.5" width="200" height="200" rx="11.43" stroke-width="11"/>
+        <path stroke-width="19" d="M45.5 91.21V45.5M165.5 45.5h-45.71M91.21 45.5c0 17.09-29.05 45.71-45.71 45.71M165.5 45.5c0 17.09-29.05 45.71-45.71 45.71M91.21 119.79v45.71M165.5 119.79v45.71M91.21 119.79c0 17.09-29.05 45.71-45.71 45.71M165.5 119.79c0 17.09-29.05 45.71-45.71 45.71"/>
+      </svg>
+    </a>
     <button type="button" id="open" class="strong"><span class="long">Open image</span><span class="short">Open</span></button>
     <button type="button" id="compare"
             title="Split the view — drag the line. Press and hold on the image (or the B key) to see the original whole."><span class="long">Before / after</span><span class="short">Compare</span></button>
@@ -19,6 +25,7 @@
       <input type="range" id="quality" min="40" max="100" step="1" value="92" aria-label="Quality">
       <output id="qualityValue">92</output>
     </label>
+    <span class="sizes" id="sizes" title="The file you opened, and the file Save will write with this format and quality"></span>
     <button type="button" id="save" class="primary"><span class="long">Save image</span><span class="short">Save</span></button>
     <button type="button" id="panelToggle" hidden>Filters</button>
     <button type="button" id="leave" class="close" hidden aria-label="Close the editing view">
@@ -45,11 +52,17 @@
     </aside>
 
     <aside class="inspector" id="inspector">
-      <div class="controls" id="controls"></div>
-      <div class="panel-foot">
-        <button type="button" class="link small" id="reset">Reset every filter</button>
+      <div class="inspector-scroll" id="inspectorScroll">
+        <div class="controls" id="controls"></div>
+        <div class="panel-foot">
+          <button type="button" class="link small" id="reset">Reset every filter</button>
+        </div>
+        <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
       </div>
-      <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
+      <figure class="loupe" id="loupe" title="Drag to look around; a click on the picture moves the loupe there">
+        <canvas id="loupeCanvas"></canvas>
+        <figcaption><span>100%</span><span>Drag to look around</span></figcaption>
+      </figure>
     </aside>
   </div>
 
@@ -63,6 +76,7 @@
     </div>
     <div class="viewer" id="viewer" hidden>
       <canvas id="canvas"></canvas>
+      <div class="loupe-mark" id="loupeMark" hidden></div>
       <div class="crop-overlay" id="cropOverlay" hidden><div class="crop-rect" id="cropRect"></div></div>
     </div>
     <div class="busy" id="busy" hidden><span></span></div>
