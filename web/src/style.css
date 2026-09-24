@@ -16,6 +16,7 @@
   --glass-text: rgba(245, 241, 234, .92);
   --glass-muted: rgba(245, 241, 234, .5);
 
+  --sheet-height: 46vh;
   --rail-width: 232px;
   --panel-width: 312px;
   --toolbar-height: 56px;
@@ -168,6 +169,9 @@ body:not(.editing) .sheet { display: none; }
 
 .viewer { position: relative; margin: auto; line-height: 0; }
 .viewer canvas { display: block; max-width: 100%; height: auto; }
+/* Centring an image larger than the window would put its top-left corner out of reach: a flex container
+   cannot be scrolled back past a centred child. At 100% it starts at the corner instead. */
+.stage.actual { align-items: flex-start; justify-content: flex-start; }
 .viewer.actual { margin: 0; }
 .viewer.actual canvas { max-width: none; }
 .viewer canvas.panning { cursor: grabbing; }
@@ -551,6 +555,9 @@ input[type=range] { width: 100%; accent-color: var(--accent-light); height: 18px
 .quality input { width: 92px; }
 .quality output { font-variant-numeric: tabular-nums; width: 22px; letter-spacing: 0; font-size: 11px; }
 
+/* Every label that has a short form for a narrow screen carries both. */
+.short { display: none; }
+
 .status {
   font-size: 10px;
   letter-spacing: .12em;
@@ -587,16 +594,24 @@ body:not(.editing) .status, body:not(.editing) .quality { color: var(--muted); }
     left: 12px;
     right: 12px;
     bottom: 12px;
-    max-height: 44vh;
+    max-height: var(--sheet-height);
     overflow: auto;
     color: var(--glass-text);
-    background: var(--glass);
+    background: linear-gradient(180deg, rgba(30, 30, 34, .78), rgba(12, 12, 14, .74));
     backdrop-filter: blur(22px);
     border: 1px solid var(--glass-line);
-    border-radius: 3px;
+    border-radius: 14px;
+    box-shadow: 0 -18px 50px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(245, 241, 234, .06);
     transition: opacity .45s var(--ease), transform .45s var(--ease);
     z-index: 4;
   }
+
+  /* The sheet must not sit on the picture: the picture ends where the sheet begins. */
+  body.editing:not(.panel-hidden) .stage { padding-bottom: calc(var(--sheet-height) + 26px); }
+
+  /* One scroller, so one hint at most — and the sheet's own edge already shows there is more. */
+  .more { display: none !important; }
+  .panel-head { border-radius: 13px 13px 0 0; }
 
   body.editing .panel,
   body.editing .inspector {
@@ -618,4 +633,32 @@ body:not(.editing) .status, body:not(.editing) .quality { color: var(--muted); }
   .status { display: none; }
   .quality input { width: 68px; }
   .toolbar { padding: 9px 12px; gap: 10px; }
+}
+
+/* A narrow window: the chrome gets out of the way — short labels, small pills, tight rows. */
+@media (max-width: 860px) {
+  .long { display: none; }
+  .short { display: inline; }
+
+  .toolbar { padding: 7px 8px; gap: 6px; }
+  .tools, .save { gap: 5px; }
+
+  .toolbar button {
+    padding: 6px 11px;
+    font-size: 9px;
+    letter-spacing: .14em;
+  }
+
+  .toolbar button.close { padding: 6px 10px; gap: 0; }
+  .toolbar button.close span { display: none; }
+  .toolbar button.close svg { width: 10px; height: 10px; }
+
+  .save select { padding: 6px 8px; font-size: 9px; letter-spacing: .1em; }
+  .quality { gap: 5px; }
+  .quality input { width: 52px; }
+  .quality output { font-size: 10px; width: 18px; }
+
+  :root { --sheet-height: 42vh; }
+  body.editing .sheet { left: 8px; right: 8px; bottom: 8px; }
+  .crop-actions { bottom: 16px; padding: 8px 8px 8px 16px; font-size: 10px; gap: 10px; }
 }

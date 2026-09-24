@@ -154,7 +154,9 @@ def scope_css(css):
             depth += (css[cursor] == "{") - (css[cursor] == "}")
             cursor += 1
         body = css[opening + 1:cursor - 1]
-        head = prelude.strip()
+        # A comment sits in the prelude of the rule after it, so what kind of rule this is has to be
+        # decided on the prelude without its comments — or an @media ends up scoped like a selector.
+        head = re.sub(r"/\*.*?\*/", "", prelude, flags=re.S).strip()
         if head.startswith("@keyframes") or head.startswith("@font-face"):
             out += prelude + "{" + body + "}\n"
         elif head.startswith("@"):

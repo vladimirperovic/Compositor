@@ -1,7 +1,7 @@
 // Darkroom in the browser. The filters themselves are the desktop app's C core compiled to WebAssembly;
 // this file is only the page around them: opening an image, keeping a screen-sized preview responsive,
 // cropping, and handing the full resolution to the encoder when the image is saved.
-import { EFFECTS, GROUPS, ORDER, PRESETS, byKind, defaultsFor, freshSettings, isNeutral, settingsFor } from './effects.js?v=%%V%%';
+import { EFFECTS, GROUPS, ORDER, PRESETS, byKind, freshSettings, isNeutral, settingsFor } from './effects.js?v=%%V%%';
 
 const PREVIEW_LIMIT = 3_500_000;  // preview pixels; beyond this the screen copy is scaled down further
 
@@ -18,7 +18,6 @@ const state = {
   selected: 0,
   seed: (Math.random() * 1e9) | 0,
   zoom: 'fit',
-  comparing: false,
   cropping: false,
   cropRect: null,
   draft: null,         // half-size preview, used while a slider is moving
@@ -59,9 +58,7 @@ const POOL_SIZE = Math.max(1, Math.min(6, (navigator.hardwareConcurrency || 4) -
 
 const pool = [];
 let nextJob = 1;
-let nextWorker = 0;
 const pending = new Map();
-const reaches = new Map();   // margin per stack, so the same stack is only asked about once
 
 function startWorkers() {
   for (let i = 0; i < POOL_SIZE; i += 1) {
@@ -170,7 +167,7 @@ async function totalReach(scale) {
 }
 
 // What the last render cost, for looking into speed without a profiler.
-const report_timing = timing => { window.__darkroom = { pool: pool.length, ...timing }; };
+const reportTiming = timing => { window.__darkroom = { pool: pool.length, ...timing }; };
 
 /// Runs the active filters over `data`, in the processor's premultiplied pixels, one step at a time.
 /// `keep` names an image whose steps are worth remembering (the preview); a one-off render leaves it out.
@@ -179,6 +176,7 @@ async function process(data, width, height, scale, keep = null,
   const stack = activeStack(scale);
   if (!stack.count) return data;
   const { steps, reaches } = await stagesFor(stack.values);
+  if (!reaches.length) return data;   // the processor found nothing to do after all
   // Steps that read no neighbours cost nothing to run together, and running them together saves a copy
   // of the image and a round trip each. Steps that blur stay on their own, so each is cached separately.
   const runs = [];
@@ -227,7 +225,7 @@ async function process(data, width, height, scale, keep = null,
     kept.keys.length = total;
     kept.images.length = total;
   }
-  report_timing({ runs: total, steps: reaches.length, reused: from,
+  reportTiming({ runs: total, steps: reaches.length, reused: from,
                   ms: +(performance.now() - started).toFixed(1) });
   return current;
 }
@@ -450,7 +448,7 @@ const beforeWork = () => new Promise(resolve => {
 });
 
 function schedule(quick = false) {
-  state.quick = quick && !state.split && !state.holding;
+  state.quick = quick;
   if (rendering) { queued = true; return; }
   run();
 }
@@ -752,15 +750,13 @@ function wire() {
   compare.addEventListener('click', () => {
     state.split = !state.split;
     compare.classList.toggle('active', state.split);
-    if (state.quick) schedule();   // the draft has no untouched twin to compare against
-    else paint();
+    paint();
   });
 
   const hold = on => {
     if (state.holding === on) return;
     state.holding = on;
-    if (state.quick) schedule();
-    else paint();
+    paint();
   };
   addEventListener('keydown', event => { if (event.key === 'b' && !event.repeat) hold(true); });
   addEventListener('keyup', event => { if (event.key === 'b') hold(false); });
@@ -819,6 +815,7 @@ function wire() {
     state.zoom = state.zoom === 'fit' ? 'actual' : 'fit';
     el('zoom').textContent = state.zoom === 'fit' ? '100%' : 'Fit';
     el('viewer').classList.toggle('actual', state.zoom === 'actual');
+    el('stage').classList.toggle('actual', state.zoom === 'actual');
     schedule();
   });
 
@@ -911,7 +908,6 @@ function wireCrop() {
 
   el('cropMode').addEventListener('click', () => {
     state.cropping = !state.cropping;
-    el('cropActions').hidden = !state.cropping;
     overlay.hidden = !state.cropping;
     el('cropActions').hidden = !state.cropping;
     el('cropMode').classList.toggle('active', state.cropping);
