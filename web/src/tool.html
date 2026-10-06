@@ -47,11 +47,51 @@
           <svg class="chevron" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
         </div>
       </div>
-      <div class="filters" id="filters"></div>
-      <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
+      <div class="filter-scroll" id="filterScroll">
+        <div class="filters" id="filters"></div>
+        <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
+      </div>
+      <div class="batch-images" id="batchImages" hidden>
+        <p class="preset-note" id="batchSummary"></p>
+        <div class="batch-gallery" id="batchGallery" role="group" aria-label="Images to edit"></div>
+      </div>
+      <div class="preset-foot">
+        <button type="button" class="preset-button" id="savePreset">Save preset</button>
+        <form id="presetForm" hidden>
+          <label for="presetName">Preset name</label>
+          <input id="presetName" type="text" maxlength="80" required autocomplete="off" placeholder="My look">
+          <p class="preset-note" id="presetHint">Saved in this browser.</p>
+          <div class="preset-actions">
+            <button type="submit" class="preset-button" id="confirmPreset">Save</button>
+            <button type="button" class="preset-button" id="cancelPreset">Cancel</button>
+          </div>
+        </form>
+        <p class="preset-note" id="presetMessage" role="status" hidden></p>
+        <div class="batch-section">
+          <button type="button" class="preset-button" id="openMultiple">Open multiple images</button>
+          <div id="batchPanel" hidden>
+            <p class="preset-note">Each image keeps its own edits.</p>
+            <div class="preset-actions batch-actions">
+              <button type="button" class="preset-button" id="saveAll" title="Save each image with its own edits, using the format and quality selected above">Save all · ZIP</button>
+              <button type="button" class="preset-button" id="cancelBatch" hidden>Cancel</button>
+              <button type="button" class="preset-button" id="clearBatch">Clear</button>
+            </div>
+            <progress id="batchProgress" aria-label="Batch export progress" hidden></progress>
+            <p class="preset-note" id="batchStatus" role="status" aria-live="polite"></p>
+            <a class="batch-download" id="batchDownload" hidden>Download ZIP</a>
+            <details id="batchErrors" hidden>
+              <summary id="batchErrorSummary"></summary>
+              <ul id="batchErrorList"></ul>
+            </details>
+          </div>
+        </div>
+      </div>
     </aside>
 
     <aside class="inspector" id="inspector">
+      <div class="inspector-resize" id="inspectorResize" role="separator" tabindex="0"
+           aria-label="Resize settings and 100% preview" aria-orientation="vertical" aria-controls="inspector"
+           title="Drag left to enlarge the 100% preview. Arrow keys resize; double-click resets."></div>
       <div class="inspector-scroll" id="inspectorScroll">
         <div class="controls" id="controls"></div>
         <div class="panel-foot">
@@ -90,3 +130,4 @@
 </div>
 
 <input type="file" id="file" accept="image/*" hidden>
+<input type="file" id="multipleFiles" accept="image/*" multiple hidden>

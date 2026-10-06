@@ -2,6 +2,9 @@
 // this file is only the page around them: opening an image, keeping a screen-sized preview responsive,
 // cropping, and handing the full resolution to the encoder when the image is saved.
 import { EFFECTS, GROUPS, ORDER, PRESETS, byKind, freshSettings, isNeutral, settingsFor } from './effects.js?v=%%V%%';
+import { copySettings, readPresets, matchingPreset, writePreset } from './saved-presets.js?v=%%V%%';
+import { exportImages } from './batch-export.js?v=%%V%%';
+import { checkCancelled } from './zip.js?v=%%V%%';
 
 const PREVIEW_LIMIT = 3_500_000;  // preview pixels; beyond this the screen copy is scaled down further
 
@@ -35,17 +38,17 @@ const state = {
 
 // Filters ---------------------------------------------------------------
 
-function activeStack(scale) {
+function activeStack(scale, settings = state.settings, seed = state.seed) {
   const values = [];
   let count = 0;
   for (const kind of ORDER) {
-    const p = state.settings[kind];
+    const p = settings[kind];
     if (isNeutral(kind, p)) continue;
     const effect = byKind(kind);
     const radius = effect.radius ? p.radius * scale : p.radius;
     values.push(kind, p.amount / 100, p.shadows / 100, p.midtones / 100, p.highlights / 100,
       radius, p.saturation / 100, p.palette, p.contrastType,
-      p.protectShadows / 100, p.protectHighlights / 100, state.seed, scale,
+      p.protectShadows / 100, p.protectHighlights / 100, seed, scale,
       p.tintShadows / 100, p.tintMidtones / 100, p.tintHighlights / 100);
     count += 1;
   }
@@ -120,10 +123,10 @@ function planBands(height, margin) {
 
 /// One step of the stack, spread across the pool. `place` says where these pixels sit inside the whole
 /// image, so a crop of it gets the same vignette, grain and fringe as the whole would.
-async function applyStage(data, width, height, values, margin, place) {
+async function applyStage(data, width, height, values, margin, place, opaque) {
   const bands = planBands(height, margin);
   const common = { op: 'apply', width, fullWidth: place.fullWidth, fullHeight: place.fullHeight,
-                   offsetX: place.x, values, opaque: state.opaque };
+                   offsetX: place.x, values, opaque };
 
   if (bands.length === 1) {
     const copy = new Uint8ClampedArray(data);   // a worker takes ownership of whatever it is sent
@@ -180,8 +183,10 @@ const reportTiming = timing => { window.__darkroom = { pool: pool.length, ...tim
 /// Runs the active filters over `data`, in the processor's premultiplied pixels, one step at a time.
 /// `keep` names an image whose steps are worth remembering (the preview); a one-off render leaves it out.
 async function process(data, width, height, scale, keep = null,
-                       place = { x: 0, y: 0, fullWidth: width, fullHeight: height }) {
-  const stack = activeStack(scale);
+                       place = { x: 0, y: 0, fullWidth: width, fullHeight: height }, options = {}) {
+  checkCancelled(options.signal);
+  const stack = options.stack || activeStack(scale);
+  const opaque = options.opaque ?? state.opaque;
   if (!stack.count) return data;
   const { steps, reaches } = await stagesFor(stack.values);
   if (!reaches.length) return data;   // the processor found nothing to do after all
@@ -219,10 +224,12 @@ async function process(data, width, height, scale, keep = null,
 
   const started = performance.now();
   for (let i = from; i < total; i += 1) {
+    checkCancelled(options.signal);
     const run = runs[i];
     const values = new Float32Array(run.steps.length * SLOTS);
     run.steps.forEach((step, at) => values.set(steps.subarray(step * SLOTS, (step + 1) * SLOTS), at * SLOTS));
-    current = await applyStage(current, width, height, values, run.margin, place);
+    current = await applyStage(current, width, height, values, run.margin, place, opaque);
+    checkCancelled(options.signal);
     if (!kept) continue;
     const room = stored + current.length <= CACHE_BUDGET;
     kept.keys[i] = room ? keys[i] : null;
@@ -276,7 +283,7 @@ const toBlob = (canvas, type, quality) => (canvas.convertToBlob
 
 /// Whether either panel is scrolled short of its end, so the chevron can say there is more.
 function scrollHints() {
-  for (const id of ['panel', 'inspectorScroll']) {
+  for (const id of ['filterScroll', 'inspectorScroll']) {
     const box = el(id);
     box.classList.toggle('has-more', box.scrollHeight - box.scrollTop - box.clientHeight > 4);
   }
@@ -320,7 +327,7 @@ function leave() {
 
 /// The toolbar wraps to two rows on a narrow screen, so the panel and the image are told how tall it is.
 function measureChrome() {
-  document.documentElement.style.setProperty('--toolbar-height', `${el('toolbar').offsetHeight}px`);
+  el('darkroom').style.setProperty('--toolbar-height', `${el('toolbar').offsetHeight}px`);
 }
 
 function buildPreview() {
@@ -538,6 +545,7 @@ const beforeWork = () => new Promise(resolve => {
 });
 
 function schedule(quick = false) {
+  captureBatchSettings();
   state.quick = quick;
   if (rendering) { queued = true; return; }
   run();
@@ -549,18 +557,22 @@ async function run() {
   const heavy = state.zoom === 'actual';
   if (heavy) el('busy').hidden = false;
   await beforeWork();
+  const source = state.source;
   const started = performance.now();
   try {
     if (heavy) {
       const piece = await visiblePiece();
+      if (state.source !== source) return;
       if (piece) {
         const data = await process(piece.data, piece.w, piece.h, 1, null,
                                    { x: piece.x, y: piece.y, fullWidth: state.source.width, fullHeight: state.source.height });
+        if (state.source !== source) return;
         show(data, piece.w, piece.h, { x: piece.x, y: piece.y });
       } else {
         const key = signature(1);
         if (!state.fullResult || state.fullResult.signature !== key) {
           const data = await process(state.source.data, state.source.width, state.source.height, 1);
+          if (state.source !== source) return;
           state.fullResult = { signature: key, data };
         }
         show(state.fullResult.data, state.source.width, state.source.height);
@@ -570,7 +582,9 @@ async function run() {
       const scale = image === state.draft ? state.draftScale : state.previewScale;
       const data = await process(image.data, image.width, image.height, scale,
                                  `preview${state.previewToken}${image === state.draft ? '-draft' : ''}`);
+      if (state.source !== source) return;
       show(data, image.width, image.height);
+      if (!state.quick && batch.active) updateEditedThumbnail(batch.active, data, image.width, image.height);
     }
     report(performance.now() - started);
     renderLoupe();
@@ -724,21 +738,93 @@ function buildControls() {
   }
 }
 
-function buildPresets() {
+let savedPresets = [];
+
+function presetOptions(selected = '') {
   const select = el('presets');
-  for (const preset of PRESETS) {
-    const option = document.createElement('option');
-    option.value = preset.id;
-    option.textContent = preset.name;
-    select.append(option);
+  select.replaceChildren(new Option('Custom', ''));
+  for (const [label, presets] of [['Built-in looks', PRESETS], ['My presets', savedPresets]]) {
+    if (!presets.length) continue;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const preset of presets) group.append(new Option(preset.name, preset.id));
+    select.append(group);
   }
+  select.value = selected;
+}
+
+function buildPresets() {
+  try { savedPresets = readPresets(localStorage); } catch { /* Storage can be blocked by the browser. */ }
+  presetOptions();
+  const select = el('presets');
   select.addEventListener('change', () => {
-    const preset = PRESETS.find(item => item.id === select.value);
-    state.settings = preset ? settingsFor(preset) : freshSettings();
+    const saved = savedPresets.find(item => item.id === select.value);
+    if (saved) {
+      state.settings = copySettings(saved.settings);
+      state.seed = saved.seed;
+    } else {
+      const preset = PRESETS.find(item => item.id === select.value);
+      state.settings = preset ? settingsFor(preset) : freshSettings();
+    }
+    el('presetMessage').hidden = true;
     const first = ORDER.find(kind => !isNeutral(kind, state.settings[kind]));
     if (first !== undefined) state.selected = first;
     refreshPanel();
     schedule();
+  });
+
+  const form = el('presetForm');
+  const name = el('presetName');
+  const message = text => {
+    el('presetMessage').textContent = text;
+    el('presetMessage').hidden = !text;
+  };
+  const describeSave = () => {
+    name.setCustomValidity('');
+    const existing = matchingPreset(savedPresets, name.value);
+    el('confirmPreset').textContent = existing ? 'Replace' : 'Save';
+    el('presetHint').textContent = existing ? `Replace “${existing.name}” with these settings.` : 'Saved in this browser.';
+  };
+  const close = () => {
+    form.hidden = true;
+    el('savePreset').hidden = false;
+    el('savePreset').focus();
+    scrollHints();
+  };
+  el('savePreset').addEventListener('click', () => {
+    name.value = savedPresets.find(item => item.id === select.value)?.name || '';
+    describeSave();
+    message('');
+    form.hidden = false;
+    el('savePreset').hidden = true;
+    name.focus();
+    name.select();
+    scrollHints();
+  });
+  name.addEventListener('input', describeSave);
+  el('cancelPreset').addEventListener('click', close);
+  form.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    event.preventDefault();
+    close();
+  });
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    if (!name.value.trim()) {
+      name.setCustomValidity('Enter a preset name.');
+      name.reportValidity();
+      return;
+    }
+    try {
+      const result = writePreset(localStorage, savedPresets, name.value, state.settings, state.seed);
+      savedPresets = result.presets;
+      presetOptions(result.preset.id);
+      close();
+      message(`“${result.preset.name}” saved in this browser.`);
+    } catch {
+      message('Could not save the preset. Allow browser storage or free some space, then try again.');
+    }
   });
 }
 
@@ -758,15 +844,42 @@ async function open(file, chosen = false) {
   }
 }
 
-async function read(file) {
+async function decodeImage(file) {
   const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const scratch = scratchCanvas(bitmap.width, bitmap.height);
-  const paint = scratch.getContext('2d', { willReadFrequently: true });
-  paint.drawImage(bitmap, 0, 0);
-  bitmap.close();
-  const image = paint.getImageData(0, 0, scratch.width, scratch.height);
+  let scratch;
+  try {
+    scratch = scratchCanvas(bitmap.width, bitmap.height);
+    const paint = scratch.getContext('2d', { willReadFrequently: true });
+    paint.drawImage(bitmap, 0, 0);
+    const image = paint.getImageData(0, 0, scratch.width, scratch.height);
+    return { width: image.width, height: image.height, data: image.data };
+  } finally {
+    bitmap.close();
+    if (scratch) { scratch.width = 1; scratch.height = 1; }
+  }
+}
+
+let openTicket = 0;
+async function read(file, entry = null) {
+  const ticket = ++openTicket;
+  let source = await decodeImage(file);
+  if (ticket !== openTicket) return;
+  if (entry && !batch.entries.includes(entry)) return;
+  captureBatchSettings();
+  batch.active = entry;
+  if (entry) {
+    source = cropPixels(source, entry.crop);
+    state.settings = copySettings(entry.settings);
+    state.seed = entry.seed;
+    state.selected = entry.selected;
+    el('presets').value = entry.preset;
+    el('presetMessage').hidden = true;
+    refreshPanel();
+  }
+  refreshBatchSelection();
+  if (state.cropping) el('cropCancel').click();
   state.fileSize = file.size;
-  adopt({ width: image.width, height: image.height, data: image.data });
+  adopt(source);
 }
 
 function adopt(source) {
@@ -802,13 +915,22 @@ function adopt(source) {
 }
 
 function cropTo(rect) {
-  const { width, data } = state.source;
+  if (batch.active) {
+    const previous = batch.active.crop;
+    batch.active.crop = { ...rect, x: (previous?.x || 0) + rect.x, y: (previous?.y || 0) + rect.y };
+  }
+  adopt(cropPixels(state.source, rect));
+}
+
+function cropPixels(source, rect) {
+  if (!rect) return source;
+  const { width, data } = source;
   const cropped = new Uint8ClampedArray(rect.w * rect.h * 4);
   for (let y = 0; y < rect.h; y += 1) {
     const from = ((rect.y + y) * width + rect.x) * 4;
     cropped.set(data.subarray(from, from + rect.w * 4), y * rect.w * 4);
   }
-  adopt({ width: rect.w, height: rect.h, data: cropped });
+  return { width: rect.w, height: rect.h, data: cropped };
 }
 
 async function save() {
@@ -833,6 +955,276 @@ async function save() {
 }
 
 const bytes = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+// Batch export keeps its files and result separate from the image being edited.
+const batch = { entries: [], active: null, loading: null, controller: null, url: null, revision: 0 };
+
+const entryKey = entry => JSON.stringify([entry.settings, entry.seed, entry.crop]);
+
+function captureBatchSettings() {
+  const entry = batch.active;
+  if (!entry) return;
+  entry.settings = copySettings(state.settings);
+  entry.seed = state.seed;
+  entry.selected = state.selected;
+  entry.preset = el('presets').value;
+  const current = entryKey(entry);
+  if (entry.lastKey !== current) {
+    entry.lastKey = current;
+    batch.revision += 1;
+    clearBatchDownload();
+    if (!batch.controller) el('batchStatus').textContent = '';
+  }
+  entry.button.classList.toggle('edited', current !== entry.initialKey);
+}
+
+function refreshBatchSelection() {
+  for (const entry of batch.entries) {
+    entry.button.classList.toggle('selected', entry === batch.active);
+    entry.button.classList.toggle('loading', entry === batch.loading);
+    entry.button.setAttribute('aria-pressed', String(entry === batch.active));
+  }
+  const button = (batch.loading || batch.active)?.button;
+  if (button) {
+    const gallery = el('batchGallery');
+    const bounds = gallery.getBoundingClientRect();
+    const thumb = button.getBoundingClientRect();
+    if (thumb.left < bounds.left) gallery.scrollLeft -= bounds.left - thumb.left;
+    else if (thumb.right > bounds.right) gallery.scrollLeft += thumb.right - bounds.right;
+  }
+}
+
+async function thumbnailBlob(bitmap) {
+  const scale = Math.min(1, 160 / bitmap.width, 120 / bitmap.height);
+  const small = scratchCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
+  try {
+    small.getContext('2d').drawImage(bitmap, 0, 0, small.width, small.height);
+    return await toBlob(small, 'image/png');
+  } finally {
+    small.width = 1;
+    small.height = 1;
+  }
+}
+
+function setThumbnail(entry, blob, revision) {
+  if (!batch.entries.includes(entry) || entry.thumbnailRevision !== revision) return;
+  if (entry.thumbnail) URL.revokeObjectURL(entry.thumbnail);
+  entry.thumbnail = URL.createObjectURL(blob);
+  entry.button.querySelector('img').src = entry.thumbnail;
+}
+
+async function loadThumbnails(entries) {
+  for (const entry of entries) {
+    if (!batch.entries.includes(entry)) return;
+    const revision = entry.thumbnailRevision;
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(entry.file, { imageOrientation: 'from-image' });
+      const blob = await thumbnailBlob(bitmap);
+      setThumbnail(entry, blob, revision);
+    } catch {
+      entry.button.classList.add('failed');
+      entry.button.title = `${entry.file.name} — preview unavailable`;
+    } finally {
+      bitmap?.close();
+    }
+  }
+}
+
+async function updateEditedThumbnail(entry, pixels, width, height) {
+  const revision = ++entry.thumbnailRevision;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(new ImageData(pixels, width, height));
+    setThumbnail(entry, await thumbnailBlob(bitmap), revision);
+  } catch { /* The initial thumbnail remains if this preview cannot be made. */ }
+  finally { bitmap?.close(); }
+}
+
+async function selectBatchImage(entry) {
+  if (!batch.entries.includes(entry) || entry === batch.loading) return;
+  if (entry === batch.active) {
+    if (batch.loading) {
+      openTicket += 1;
+      batch.loading = null;
+      el('saveAll').disabled = !!batch.controller;
+      refreshBatchSelection();
+    }
+    return;
+  }
+  batch.loading = entry;
+  el('saveAll').disabled = true;
+  refreshBatchSelection();
+  try {
+    await read(entry.file, entry);
+  } catch {
+    if (batch.loading === entry && batch.entries.includes(entry)) {
+      el('batchStatus').textContent = `${entry.file.name} could not be opened.`;
+      entry.button.classList.add('failed');
+    }
+  } finally {
+    if (batch.loading === entry) {
+      batch.loading = null;
+      el('saveAll').disabled = !!batch.controller;
+      refreshBatchSelection();
+    }
+  }
+}
+
+function clearBatchDownload() {
+  if (batch.url) URL.revokeObjectURL(batch.url);
+  batch.url = null;
+  el('batchDownload').hidden = true;
+  el('batchDownload').removeAttribute('href');
+}
+
+function chooseBatch(files) {
+  if (batch.controller || !files.length) return;
+  captureBatchSettings();
+  clearBatchDownload();
+  const added = Array.from(files, file => ({
+    file, settings: copySettings(state.settings), seed: state.seed, crop: null,
+    selected: state.selected, preset: el('presets').value, thumbnail: null, thumbnailRevision: 0,
+  }));
+  batch.entries.push(...added);
+  batch.revision += 1;
+  for (const entry of added) {
+    entry.initialKey = entryKey(entry);
+    entry.lastKey = entry.initialKey;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'batch-thumb';
+    button.title = entry.file.name;
+    button.setAttribute('aria-label', `Edit ${batch.entries.indexOf(entry) + 1}: ${entry.file.name}`);
+    button.setAttribute('aria-pressed', 'false');
+    const thumbnail = document.createElement('img');
+    thumbnail.alt = '';
+    const name = document.createElement('span');
+    name.textContent = entry.file.name;
+    button.append(thumbnail, name);
+    button.addEventListener('click', () => selectBatchImage(entry));
+    entry.button = button;
+    el('batchGallery').append(button);
+  }
+  el('batchSummary').textContent = `${batch.entries.length} image${batch.entries.length === 1 ? '' : 's'} · individual edits`;
+  el('batchPanel').hidden = false;
+  el('batchImages').hidden = false;
+  el('batchStatus').textContent = '';
+  el('batchErrors').hidden = true;
+  el('batchErrorList').replaceChildren();
+  el('batchProgress').hidden = true;
+  if (!document.body.classList.contains('editing')) enterEditing();
+  document.body.classList.remove('panel-hidden');
+  el('panelToggle').classList.add('active');
+  scrollHints();
+  loadThumbnails(added);
+  selectBatchImage(added[0]);
+}
+
+async function saveAll() {
+  if (batch.controller || batch.loading || !batch.entries.length) return;
+  captureBatchSettings();
+  const controller = new AbortController();
+  batch.controller = controller;
+  const entries = batch.entries.map(entry => ({
+    file: entry.file, crop: entry.crop ? { ...entry.crop } : null,
+    stack: activeStack(1, copySettings(entry.settings), entry.seed),
+  }));
+  const files = entries.map(entry => entry.file);
+  const exportRevision = batch.revision;
+  const type = el('format').value;
+  const quality = Number(el('quality').value) / 100;
+  const format = `${type.split('/')[1].toUpperCase()}${type === 'image/png' ? '' : ` ${Math.round(quality * 100)}%`}`;
+  clearBatchDownload();
+  el('batchErrors').hidden = true;
+  el('batchErrorList').replaceChildren();
+  el('batchProgress').max = files.length;
+  el('batchProgress').value = 0;
+  el('batchProgress').hidden = false;
+  for (const id of ['openMultiple', 'saveAll', 'clearBatch']) el(id).disabled = true;
+  el('cancelBatch').hidden = false;
+  el('cancelBatch').disabled = false;
+  try {
+    const result = await exportImages(files, {
+      type, signal: controller.signal,
+      read: async (file, index) => cropPixels(await decodeImage(file), entries[index].crop),
+      render: (source, file, index) => process(source.data, source.width, source.height, 1, null, undefined,
+        { stack: entries[index].stack, opaque: isOpaque(source.data), signal: controller.signal }),
+      encode: async (pixels, width, height) => {
+        const out = scratchCanvas(width, height);
+        try {
+          out.getContext('2d').putImageData(new ImageData(pixels, width, height), 0, 0);
+          return await toBlob(out, type, quality);
+        } finally {
+          out.width = 1;
+          out.height = 1;
+        }
+      },
+      onProgress: ({ completed, total, name }) => {
+        el('batchProgress').value = completed;
+        el('batchStatus').textContent = name ? `${completed + 1} / ${total} · ${name} · ${format}` : 'Preparing ZIP…';
+      },
+    });
+    for (const failure of result.failures) {
+      const item = document.createElement('li');
+      item.textContent = `${failure.name}: ${failure.message}`;
+      el('batchErrorList').append(item);
+    }
+    el('batchErrors').hidden = !result.failures.length;
+    el('batchErrorSummary').textContent = `${result.failures.length} image${result.failures.length === 1 ? '' : 's'} could not be exported`;
+    if (!result.blob) {
+      el('batchStatus').textContent = 'No images were exported. Check the files listed below.';
+      return;
+    }
+    batch.url = URL.createObjectURL(result.blob);
+    const download = el('batchDownload');
+    download.href = batch.url;
+    download.download = 'darkroom-images.zip';
+    download.textContent = `Download ZIP · ${bytes(result.blob.size)}`;
+    download.hidden = false;
+    el('batchStatus').textContent = `${result.saved} / ${files.length} images exported · ${format}.`
+      + (result.failures.length ? ' Some files were skipped; see below.' : '')
+      + (batch.revision !== exportRevision ? ' Newer edits were made during export; Save all again to include them.' : '');
+    download.click();
+  } catch (error) {
+    el('batchStatus').textContent = controller.signal.aborted
+      ? 'Export cancelled. No ZIP was downloaded. You can start again.'
+      : `Export failed: ${error.message}`;
+  } finally {
+    batch.controller = null;
+    for (const id of ['openMultiple', 'saveAll', 'clearBatch']) el(id).disabled = false;
+    el('saveAll').disabled = !!batch.loading;
+    el('cancelBatch').hidden = true;
+    scrollHints();
+  }
+}
+
+function wireBatch() {
+  el('openMultiple').addEventListener('click', () => el('multipleFiles').click());
+  el('multipleFiles').addEventListener('change', event => {
+    chooseBatch(event.target.files);
+    event.target.value = '';
+  });
+  el('saveAll').addEventListener('click', saveAll);
+  el('cancelBatch').addEventListener('click', () => {
+    batch.controller?.abort();
+    el('cancelBatch').disabled = true;
+    el('batchStatus').textContent = 'Cancelling after the current filter…';
+  });
+  el('clearBatch').addEventListener('click', () => {
+    openTicket += 1;
+    for (const entry of batch.entries) if (entry.thumbnail) URL.revokeObjectURL(entry.thumbnail);
+    batch.entries = [];
+    batch.active = null;
+    batch.loading = null;
+    batch.revision += 1;
+    clearBatchDownload();
+    el('batchGallery').replaceChildren();
+    el('batchPanel').hidden = true;
+    el('batchImages').hidden = true;
+    scrollHints();
+  });
+}
 
 /// What Save would write: the filters at full resolution, in the chosen format and quality. PNG has no
 /// quality, so moving the slider does not make it a different file.
@@ -1027,6 +1419,75 @@ function wireLoupe() {
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => renderLoupe()).observe(box);
 }
 
+function wireInspectorResize() {
+  const handle = el('inspectorResize');
+  const root = el('darkroom');
+  const storageKey = 'darkroom.inspector-width.v1';
+  const minimum = 280;
+  const defaultWidth = 312;
+  let preferred = defaultWidth;
+  let drag = null;
+  try {
+    const saved = Number(localStorage.getItem(storageKey));
+    if (Number.isFinite(saved) && saved >= minimum) preferred = saved;
+  } catch { /* Resizing also works without storage. */ }
+  const maximum = () => Math.max(minimum, Math.min(800, window.innerWidth - 232 - 320 - 64));
+  const apply = () => {
+    const width = Math.round(Math.min(maximum(), Math.max(minimum, preferred)));
+    root.style.setProperty('--panel-width', `${width}px`);
+    handle.setAttribute('aria-valuemin', minimum);
+    handle.setAttribute('aria-valuemax', maximum());
+    handle.setAttribute('aria-valuenow', width);
+    handle.setAttribute('aria-valuetext', `${width} pixels`);
+    scrollHints();
+  };
+  const saveWidth = () => {
+    try { localStorage.setItem(storageKey, String(preferred)); } catch { /* Optional preference. */ }
+  };
+  const finish = () => {
+    if (!drag) return;
+    drag = null;
+    root.classList.remove('resizing-inspector');
+    saveWidth();
+    if (state.source && state.zoom === 'actual') schedule();
+  };
+  handle.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || window.innerWidth <= 1080) return;
+    drag = { x: event.clientX, width: el('inspector').getBoundingClientRect().width };
+    handle.setPointerCapture(event.pointerId);
+    root.classList.add('resizing-inspector');
+    event.preventDefault();
+  });
+  handle.addEventListener('pointermove', event => {
+    if (!drag) return;
+    preferred = Math.min(maximum(), Math.max(minimum, drag.width + drag.x - event.clientX));
+    apply();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) handle.addEventListener(type, finish);
+  handle.addEventListener('keydown', event => {
+    const current = el('inspector').getBoundingClientRect().width;
+    const step = event.shiftKey ? 50 : 10;
+    if (event.key === 'ArrowLeft') preferred = current + step;
+    else if (event.key === 'ArrowRight') preferred = current - step;
+    else if (event.key === 'Home') preferred = defaultWidth;
+    else if (event.key === 'End') preferred = maximum();
+    else return;
+    event.preventDefault();
+    preferred = Math.min(maximum(), Math.max(minimum, preferred));
+    apply();
+    saveWidth();
+    if (state.source && state.zoom === 'actual') schedule();
+  });
+  handle.addEventListener('dblclick', () => {
+    preferred = defaultWidth;
+    apply();
+    saveWidth();
+    if (state.source && state.zoom === 'actual') schedule();
+  });
+  addEventListener('resize', () => { finish(); apply(); });
+  apply();
+}
+
 // Wiring ----------------------------------------------------------------
 
 function wire() {
@@ -1042,7 +1503,8 @@ function wire() {
   stage.addEventListener('drop', event => {
     event.preventDefault();
     stage.classList.remove('dragging');
-    open(event.dataTransfer.files[0], true);
+    if (event.dataTransfer.files.length > 1) chooseBatch(event.dataTransfer.files);
+    else open(event.dataTransfer.files[0], true);
   });
 
   const panels = shown => {
@@ -1067,7 +1529,9 @@ function wire() {
     paint();
     paintLoupe();
   };
-  addEventListener('keydown', event => { if (event.key === 'b' && !event.repeat) hold(true); });
+  addEventListener('keydown', event => {
+    if (event.key === 'b' && !event.repeat && !event.target.closest?.('input, select, textarea, [contenteditable]')) hold(true);
+  });
   addEventListener('keyup', event => { if (event.key === 'b') hold(false); });
 
   // A double click anywhere on the stage puts the panels away, and brings them back.
@@ -1220,7 +1684,7 @@ function wire() {
     }
   });
 
-  for (const id of ['panel', 'inspectorScroll']) el(id).addEventListener('scroll', scrollHints);
+  for (const id of ['filterScroll', 'inspectorScroll']) el(id).addEventListener('scroll', scrollHints);
 
   let scrolling = null;
   el('stage').addEventListener('scroll', () => {
@@ -1231,6 +1695,8 @@ function wire() {
 
   wireCrop();
   wireLoupe();
+  wireInspectorResize();
+  wireBatch();
   addEventListener('resize', () => {
     measureChrome();
     scrollHints();
@@ -1239,6 +1705,8 @@ function wire() {
     schedule();
   });
   measureChrome();
+  // Status and file sizes can wrap the toolbar after the image finishes loading.
+  if (typeof ResizeObserver === 'function') new ResizeObserver(measureChrome).observe(el('toolbar'));
 }
 
 const HANDLES = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
