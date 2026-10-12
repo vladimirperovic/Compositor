@@ -26,6 +26,40 @@
 
 [hidden] { display: none !important; }
 
+.retouch-tools { padding-bottom: 14px; border-bottom: 1px solid var(--glass-line); }
+.retouch-tools > button { display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: inherit; font-size: 12px; cursor: pointer; }
+.retouch-tools > button:hover, .retouch-tools > button.selected { background: rgba(215, 181, 132, .16); color: var(--accent-light); }
+.retouch-tools > button:disabled { opacity: .4; cursor: default; }
+.retouch-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.retouch-button { padding: 8px 10px; border: 1px solid var(--glass-line); border-radius: 6px; background: transparent; color: inherit; font-size: 11px; cursor: pointer; }
+.retouch-button:hover { background: rgba(215, 181, 132, .16); }
+.retouch-button:disabled { opacity: .35; cursor: default; }
+.retouch-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; margin: 10px 0; }
+.local-layers { display: grid; gap: 4px; max-height: 160px; overflow: auto; margin: 12px 0; }
+.local-layer { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--glass-line); border-radius: 6px; }
+.local-layer.selected { border-color: var(--accent-light); }
+.local-layer .retouch-toggle { font-size: 0; margin: 0; }
+.local-layer .retouch-button { flex: 1; text-align: left; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layer-name { width: 100%; background: transparent; border: 1px solid var(--glass-line); padding: 8px; border-radius: 6px; font-size: 12px; }
+.retouch-controls .control { display: block; }
+.retouch-controls select { margin-top: 7px; }
+.retouch-controls .control > select { display: block; width: 100%; }
+#darkroom.is-retouching .loupe-mark { display: none !important; }
+.retouch-overlay { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; cursor: crosshair; }
+.retouch-overlay.hand { cursor: grab; }
+.retouch-overlay.hand.painting { cursor: grabbing; }
+.retouch-overlay.sampling { cursor: crosshair; }
+.local-ellipse { position: absolute; border: 1px dashed var(--accent-light); border-radius: 50%; cursor: move; box-shadow: 0 0 0 1px rgba(0, 0, 0, .3); }
+.local-ellipse > span { position: absolute; width: 22px; height: 22px; margin: -11px; border: 5px solid transparent; background: var(--paper); background-clip: content-box; border-radius: 50%; }
+.local-ellipse > [data-handle="nw"] { left: 0; top: 0; cursor: nwse-resize; }
+.local-ellipse > [data-handle="ne"] { right: 0; top: 0; cursor: nesw-resize; }
+.local-ellipse > [data-handle="sw"] { left: 0; bottom: 0; cursor: nesw-resize; }
+.local-ellipse > [data-handle="se"] { right: 0; bottom: 0; cursor: nwse-resize; }
+.brush-cursor { position: absolute; border: 1px solid white; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px #0008; pointer-events: none; }
+@media (min-width: 1081px) {
+  body.editing:not(.panel-hidden) #darkroom.is-retouching .stage { padding: calc(var(--toolbar-height) + 24px) calc(var(--panel-width) + 42px) 24px calc(var(--rail-width) + 42px); }
+}
+
 html, body {
   margin: 0;
   background: var(--paper);

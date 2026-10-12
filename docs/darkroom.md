@@ -1,5 +1,39 @@
 # Darkroom
 
+## Browser retouch tools
+
+The browser editor's **Retouch** section adds **Local light · layers**, **White balance · pipette** and
+**Individual colors**. These browser tools run in JavaScript workers alongside the existing WASM filters;
+they do not change the native macOS editor or require AI models or uploads.
+
+Local light supports up to 16 independent oval or brush layers. New layers use **Soft Light**;
+**Overlay** gives a stronger blend and **Normal** displays the white/black paint directly. Each layer has
+visibility, name, opacity, ordering and deletion controls. The implicit 50% grey background is neutral in
+Soft Light and Overlay. White brush strokes lighten, black strokes darken, and Erase returns paint to
+neutral. Size, softness and stroke strength are adjustable. Ovals have signed Light / dark strength and
+softness, draggable centres and corner resize handles. Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z, or Undo/Redo, undo
+retouch edits on the current image (up to 40 steps); switching images starts a fresh undo history.
+X swaps white/black, Space-drag pans and the wheel zooms. Done or Escape leaves local editing and restores
+the previous comparison view. Pointer cancellation discards the unfinished stroke.
+
+The pipette samples a 5×5 neighbourhood in the original pixels, skipping transparent, clipped and very
+dark samples. It preserves sample luminance while neutralising its RGB cast. Strength, Temperature and
+Tint provide manual refinement. Individual colors has eight smoothly overlapping ranges (red, orange,
+yellow, green, aqua, blue, purple and magenta), each with Hue, Saturation and Lightness. Color corrections
+run before the photographic filters; local light layers blend on top afterwards. This is an 8-bit
+finishing workflow, not RAW highlight recovery or physically simulated relighting.
+
+Masks use original-image coordinates, so crop, reopening crop, zoom, preview, loupe and full-resolution
+export agree. Each open image keeps its own corrections and layers. ZIP export snapshots each image's
+settings before processing; saved looks store WB and color settings but omit image-specific masks.
+Images and local layers live only in the open tab; exported JPEG/PNG/WebP files contain the flattened
+result. Browser presets remain in local storage.
+
+Checks after building: `node scripts/tests/web-adjustments.test.mjs`,
+`node scripts/tests/web-retouch.test.mjs` and `node scripts/tests/web-editor.test.mjs` (the latter two need
+Playwright; `PLAYWRIGHT_MODULE` can point at an existing installation). They exercise real editor controls,
+mask coordinates, layer blends, crop, PNG/ZIP pixel output, isolated images, cancellation and mobile UI.
+
 Darkroom is a finishing workspace for architectural renders: photographic tone, color and lens character in one live-preview stack, applied as a new layer. (In the code it is called Render Finish: `RenderFinish*` types and `FinishPixels.c`.)
 
 Open an image, select its image layer, then choose **Filter → Darkroom…**. To finish the whole composition instead, choose **Filter → Darkroom on Merged Visible…**, or switch the Layer / Merged Visible control at the top of the workspace at any time; the settings and view are kept.

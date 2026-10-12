@@ -7,6 +7,7 @@ const threads = false;
 
 // Floats per effect, matching DK_SLOTS in darkroom.c.
 const SLOTS = 16;
+const adjustments = import('./adjustments.js?v=%%V%%');
 
 const ready = (async () => {
   importScripts('darkroom.js?v=%%V%%');
@@ -17,6 +18,16 @@ ready.then(() => self.postMessage({ hello: true, threads }));
 
 self.onmessage = async event => {
   const { id, op, buffer, width, height, fullWidth, fullHeight, offsetX, offsetY, values, opaque } = event.data;
+  if (op === 'colors' || op === 'local') {
+    try {
+      const core = await adjustments;
+      const pixels = new Uint8ClampedArray(buffer);
+      const output = op === 'colors' ? core.applyColors(pixels, event.data.adjustments)
+        : core.applyLocal(pixels, width, height, event.data.adjustments.layers, event.data.geometry, event.data.place);
+      self.postMessage({ id, ok: true, buffer: output.buffer }, [output.buffer]);
+    } catch (error) { self.postMessage({ id, ok: false, error: error.message }); }
+    return;
+  }
   await ready;
 
   if (op === 'expand') {

@@ -1,4 +1,5 @@
 import { EFFECTS, freshSettings } from './effects.js?v=%%V%%';
+import { copyAdjustments } from './adjustments.js?v=%%V%%';
 
 const KEY = 'darkroom.presets.v1';
 
@@ -37,6 +38,7 @@ export function readPresets(storage) {
     }).map(item => ({
       id: item.id, name: item.name.trim().slice(0, 80), settings: copySettings(item.settings),
       seed: Number.isInteger(item.seed) ? item.seed : 0,
+      adjustments: copyAdjustments(item.adjustments, false),
     }));
   } catch {
     return [];
@@ -45,11 +47,12 @@ export function readPresets(storage) {
 
 export const matchingPreset = (presets, name) => presets.find(item => item.name.toLowerCase() === name.trim().toLowerCase());
 
-export function writePreset(storage, presets, name, settings, seed) {
+export function writePreset(storage, presets, name, settings, seed, adjustments) {
   name = name.trim();
   if (!name || name.length > 80) throw new Error('Enter a preset name (up to 80 characters).');
   const existing = matchingPreset(presets, name);
-  const preset = { id: existing?.id || `saved-${crypto.randomUUID()}`, name, settings: copySettings(settings), seed };
+  const preset = { id: existing?.id || `saved-${crypto.randomUUID()}`, name, settings: copySettings(settings), seed,
+    adjustments: copyAdjustments(adjustments, false) };
   const updated = existing ? presets.map(item => item.id === existing.id ? preset : item) : [...presets, preset];
   // Only change the menu after persistent storage succeeds.
   storage.setItem(KEY, JSON.stringify(updated));

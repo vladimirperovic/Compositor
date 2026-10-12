@@ -48,6 +48,12 @@
         </div>
       </div>
       <div class="filter-scroll" id="filterScroll">
+        <div class="retouch-tools" aria-label="Retouch tools">
+          <div class="group-label">Retouch</div>
+          <button type="button" id="localLight">Local light · layers</button>
+          <button type="button" id="whiteBalance">White balance · pipette</button>
+          <button type="button" id="selectiveColor">Individual colors</button>
+        </div>
         <div class="filters" id="filters"></div>
         <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
       </div>
@@ -95,7 +101,7 @@
       <div class="inspector-scroll" id="inspectorScroll">
         <div class="controls" id="controls"></div>
         <div class="panel-foot">
-          <button type="button" class="link small" id="reset">Reset every filter</button>
+          <button type="button" class="link small" id="reset">Reset filters &amp; retouch</button>
         </div>
         <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
       </div>
@@ -118,6 +124,13 @@
     <div class="viewer" id="viewer" hidden>
       <canvas id="canvas"></canvas>
       <div class="loupe-mark" id="loupeMark" hidden></div>
+      <div class="retouch-overlay" id="retouchOverlay" hidden aria-label="Local light editing area">
+        <div class="local-ellipse" id="localEllipse" hidden>
+          <span data-handle="nw"></span><span data-handle="ne"></span>
+          <span data-handle="sw"></span><span data-handle="se"></span>
+        </div>
+        <div class="brush-cursor" id="brushCursor" hidden></div>
+      </div>
       <div class="crop-overlay" id="cropOverlay" hidden><div class="crop-rect" id="cropRect"></div></div>
     </div>
     <div class="busy" id="busy" hidden><span></span></div>

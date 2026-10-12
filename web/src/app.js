@@ -6,6 +6,8 @@ import { copySettings, readPresets, matchingPreset, writePreset } from './saved-
 import { exportImages } from './batch-export.js?v=%%V%%';
 import { checkCancelled } from './zip.js?v=%%V%%';
 import { wireCrop } from './crop-ui.js?v=%%V%%';
+import { freshAdjustments, copyAdjustments, hasColors } from './adjustments.js?v=%%V%%';
+import { wireAdjustments } from './adjustments-ui.js?v=%%V%%';
 
 const PREVIEW_LIMIT = 3_500_000;  // preview pixels; beyond this the screen copy is scaled down further
 
@@ -21,6 +23,8 @@ const state = {
   preview: null,       // the same image at screen size
   previewScale: 1,
   settings: freshSettings(),
+  adjustments: freshAdjustments(),
+  retouching: false,
   selected: 0,
   seed: (Math.random() * 1e9) | 0,
   zoom: 'fit',         // 'fit', or 'actual': drawn at `scale` screen points per image pixel
@@ -38,6 +42,7 @@ const state = {
   holding: false,      // pressing on the image shows the original underneath
   fullResult: null,    // { signature, data } so saving and 100% do not repeat the same work
 };
+let adjustmentsUI = null;
 
 // Filters ---------------------------------------------------------------
 
@@ -185,7 +190,7 @@ const reportTiming = timing => { window.__darkroom = { pool: pool.length, ...tim
 
 /// Runs the active filters over `data`, in the processor's premultiplied pixels, one step at a time.
 /// `keep` names an image whose steps are worth remembering (the preview); a one-off render leaves it out.
-async function process(data, width, height, scale, keep = null,
+async function processFilters(data, width, height, scale, keep = null,
                        place = { x: 0, y: 0, fullWidth: width, fullHeight: height }, options = {}) {
   checkCancelled(options.signal);
   const stack = options.stack || activeStack(scale);
@@ -248,12 +253,49 @@ async function process(data, width, height, scale, keep = null,
   return current;
 }
 
+function adjustmentGeometry() {
+  const image = state.original || state.source;
+  return { originalWidth: image.width, originalHeight: image.height,
+    crop: !state.cropping && state.appliedCrop ? { ...state.appliedCrop } : { x: 0, y: 0, w: image.width, h: image.height } };
+}
+
+async function adjustmentStage(data, width, height, op, adjustments, geometry, place, signal) {
+  const bands = planBands(height, 0), row = width * 4;
+  const output = new Uint8ClampedArray(data.length);
+  await Promise.all(bands.map(async (band, i) => {
+    checkCancelled(signal);
+    const pixels = data.slice(band.from * row, band.to * row);
+    const done = await ask(pool[i], { op, buffer: pixels.buffer, width, height: band.to - band.from,
+      adjustments, geometry, place: { ...place, y: place.y + band.from } }, [pixels.buffer]);
+    output.set(new Uint8ClampedArray(done.buffer), band.from * row);
+  }));
+  checkCancelled(signal);
+  return output;
+}
+
+// Snapshot before awaiting: background exports and a newly selected photo cannot change an in-flight frame.
+async function process(data, width, height, scale, keep = null,
+  place = { x: 0, y: 0, fullWidth: width, fullHeight: height }, options = {}) {
+  const adjustments = copyAdjustments(options.adjustments ?? state.adjustments);
+  const geometry = options.geometry ?? adjustmentGeometry();
+  const fixed = { ...options, stack: options.stack || activeStack(scale), opaque: options.opaque ?? state.opaque };
+  checkCancelled(options.signal);
+  let current = data;
+  if (hasColors(adjustments)) current = await adjustmentStage(current, width, height, 'colors', adjustments, geometry, place, options.signal);
+  const colorKey = JSON.stringify([adjustments.whiteBalance, adjustments.colors]);
+  current = await processFilters(current, width, height, scale, keep ? `${keep}|${colorKey}` : null, place, fixed);
+  if (adjustments.layers.some(layer => layer.enabled && layer.opacity)) {
+    current = await adjustmentStage(current, width, height, 'local', adjustments, geometry, place, options.signal);
+  }
+  return current;
+}
+
 const isOpaque = data => {
   for (let i = 3; i < data.length; i += 4) if (data[i] !== 255) return false;
   return true;
 };
 
-const signature = scale => JSON.stringify([scale, state.seed, activeStack(scale).values]);
+const signature = scale => JSON.stringify([scale, state.seed, activeStack(scale).values, state.adjustments, state.appliedCrop, state.cropping]);
 
 // Drawing ---------------------------------------------------------------
 
@@ -658,14 +700,20 @@ function refreshPanel() {
     row.querySelector('input').checked = p.enabled;
   }
   buildControls();
+  adjustmentsUI?.sync();
   scrollHints();
 }
 
 function buildControls() {
-  const effect = byKind(state.selected);
-  const p = state.settings[effect.kind];
   const box = el('controls');
   box.replaceChildren();
+  box.classList.remove('retouch-controls');
+  if (typeof state.selected === 'string' && adjustmentsUI) {
+    adjustmentsUI.render(box, state.selected);
+    return;
+  }
+  const effect = byKind(state.selected);
+  const p = state.settings[effect.kind];
   box.classList.toggle('disabled', !p.enabled);
 
   const summary = document.createElement('p');
@@ -765,6 +813,7 @@ function buildPresets() {
     const saved = savedPresets.find(item => item.id === select.value);
     if (saved) {
       state.settings = copySettings(saved.settings);
+      state.adjustments = { ...copyAdjustments(saved.adjustments, false), layers: state.adjustments.layers };
       state.seed = saved.seed;
     } else {
       const preset = PRESETS.find(item => item.id === select.value);
@@ -774,6 +823,7 @@ function buildPresets() {
     const first = ORDER.find(kind => !isNeutral(kind, state.settings[kind]));
     if (first !== undefined) state.selected = first;
     refreshPanel();
+    adjustmentsUI?.load();
     schedule();
   });
 
@@ -787,7 +837,7 @@ function buildPresets() {
     name.setCustomValidity('');
     const existing = matchingPreset(savedPresets, name.value);
     el('confirmPreset').textContent = existing ? 'Replace' : 'Save';
-    el('presetHint').textContent = existing ? `Replace “${existing.name}” with these settings.` : 'Saved in this browser.';
+    el('presetHint').textContent = existing ? `Replace “${existing.name}” with these color and filter settings.` : 'Color and filter settings, saved in this browser. Local light layers stay with their image.';
   };
   const close = () => {
     form.hidden = true;
@@ -821,7 +871,7 @@ function buildPresets() {
       return;
     }
     try {
-      const result = writePreset(localStorage, savedPresets, name.value, state.settings, state.seed);
+      const result = writePreset(localStorage, savedPresets, name.value, state.settings, state.seed, state.adjustments);
       savedPresets = result.presets;
       presetOptions(result.preset.id);
       close();
@@ -870,10 +920,13 @@ async function read(file, entry = null) {
   if (ticket !== openTicket) return;
   if (entry && !batch.entries.includes(entry)) return;
   if (state.cropping) el('cropCancel').click();
+  adjustmentsUI?.cancel();
   captureBatchSettings();
   batch.active = entry;
   state.original = source;
   state.appliedCrop = entry?.crop ? { ...entry.crop } : null;
+  state.adjustments = copyAdjustments(entry?.adjustments);
+  adjustmentsUI?.load();
   if (entry) {
     source = cropPixels(source, entry.crop);
     state.settings = copySettings(entry.settings);
@@ -886,6 +939,7 @@ async function read(file, entry = null) {
   refreshBatchSelection();
   state.fileSize = file.size;
   adopt(source);
+  refreshPanel();
 }
 
 function adopt(source) {
@@ -918,6 +972,7 @@ function adopt(source) {
     takeWindow = false;
     enterEditing();
   }
+  adjustmentsUI?.sync();
 }
 
 function cropTo(rect) {
@@ -964,12 +1019,13 @@ const bytes = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.ma
 // Batch export keeps its files and result separate from the image being edited.
 const batch = { entries: [], active: null, loading: null, controller: null, url: null, revision: 0 };
 
-const entryKey = entry => JSON.stringify([entry.settings, entry.seed, entry.crop]);
+const entryKey = entry => JSON.stringify([entry.settings, entry.seed, entry.crop, entry.adjustments]);
 
 function captureBatchSettings() {
   const entry = batch.active;
   if (!entry) return;
   entry.settings = copySettings(state.settings);
+  entry.adjustments = copyAdjustments(state.adjustments);
   entry.seed = state.seed;
   entry.selected = state.selected;
   entry.preset = el('presets').value;
@@ -1138,6 +1194,7 @@ function chooseBatch(files) {
   clearBatchDownload();
   const added = Array.from(files, file => ({
     file, settings: copySettings(state.settings), seed: state.seed, crop: null,
+    adjustments: copyAdjustments(state.adjustments, false),
     selected: state.selected, preset: el('presets').value, thumbnail: null, thumbnailRevision: 0,
   }));
   batch.entries.push(...added);
@@ -1194,6 +1251,7 @@ async function saveAll() {
   batch.controller = controller;
   const entries = batch.entries.map(entry => ({
     file: entry.file, crop: entry.crop ? { ...entry.crop } : null,
+    adjustments: copyAdjustments(entry.adjustments),
     stack: activeStack(1, copySettings(entry.settings), entry.seed),
   }));
   const files = entries.map(entry => entry.file);
@@ -1213,9 +1271,15 @@ async function saveAll() {
   try {
     const result = await exportImages(files, {
       type, signal: controller.signal,
-      read: async (file, index) => cropPixels(await decodeImage(file), entries[index].crop),
+      read: async (file, index) => {
+        const source = await decodeImage(file), entry = entries[index];
+        entry.geometry = { originalWidth: source.width, originalHeight: source.height,
+          crop: entry.crop || { x: 0, y: 0, w: source.width, h: source.height } };
+        return cropPixels(source, entry.crop);
+      },
       render: (source, file, index) => process(source.data, source.width, source.height, 1, null, undefined,
-        { stack: entries[index].stack, opaque: isOpaque(source.data), signal: controller.signal }),
+        { stack: entries[index].stack, adjustments: entries[index].adjustments, geometry: entries[index].geometry,
+          opaque: isOpaque(source.data), signal: controller.signal }),
       encode: async (pixels, width, height) => {
         const out = scratchCanvas(width, height);
         try {
@@ -1385,6 +1449,7 @@ async function renderLoupe() {
     const { width, height } = source;
     // The margin the stack reads around the piece, so its edges come out as they would in the whole.
     const margin = await totalReach(1);
+    if (state.source !== source) return;
     const px = Math.max(0, rect.x - margin);
     const py = Math.max(0, rect.y - margin);
     const pw = Math.min(width, rect.x + rect.w + margin) - px;
@@ -1589,14 +1654,14 @@ function wire() {
     paintLoupe();
   };
   addEventListener('keydown', event => {
-    if (state.cropping || event.defaultPrevented) return;
+    if (state.cropping || state.retouching || event.defaultPrevented) return;
     if (event.key === 'b' && !event.repeat && !event.target.closest?.('input, select, textarea, [contenteditable]')) hold(true);
   });
   addEventListener('keyup', event => { if (event.key === 'b') hold(false); });
 
   // A double click anywhere on the stage puts the panels away, and brings them back.
   el('stage').addEventListener('dblclick', () => {
-    if (state.cropping) return;
+    if (state.cropping || state.retouching) return;
     if (!document.body.classList.contains('editing')) { enterEditing(); return; }
     panels(document.body.classList.contains('panel-hidden'));
   });
@@ -1697,7 +1762,7 @@ function wire() {
   let sliding = null;
   stage.addEventListener('pointerdown', event => {
     if (state.zoom !== 'actual' || state.cropping || event.target === canvas || event.button !== 0) return;
-    if (event.target.closest('.crop-overlay, .dropzone, button, a, input, select')) return;
+    if (event.target.closest('.crop-overlay, .retouch-overlay, .dropzone, button, a, input, select')) return;
     sliding = { x: event.clientX, y: event.clientY, left: stage.scrollLeft, top: stage.scrollTop };
     stage.setPointerCapture(event.pointerId);
     stage.classList.add('sliding');
@@ -1713,6 +1778,7 @@ function wire() {
   }
 
   el('reset').addEventListener('click', () => {
+    adjustmentsUI?.reset();
     state.settings = freshSettings();
     el('presets').value = '';
     refreshPanel();
@@ -1757,6 +1823,7 @@ function wire() {
   wireCrop({ state, el, showOriginal: () => adopt(state.original),
     restore: () => adopt(cropPixels(state.original, state.appliedCrop)), apply: cropTo,
     redraw: () => { buildPreview(); schedule(); }, updateControls: updateBatchControls });
+  adjustmentsUI = wireAdjustments({ state, el, schedule, refreshPanel, paint, redraw: () => { buildPreview(); schedule(); } });
   wireLoupe();
   wireInspectorResize();
   wireBatch();
