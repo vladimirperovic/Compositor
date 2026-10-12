@@ -1672,7 +1672,7 @@ function wire() {
   // behind the tool scrolls. In the page the wheel still scrolls the page, and only a pinch zooms.
   let settle = 0;
   stage.addEventListener('wheel', event => {
-    if (!state.source || state.cropping) return;
+    if (!state.source) return;
     const editing = document.body.classList.contains('editing');
     if (!editing && !event.ctrlKey) return;
     event.preventDefault();
@@ -1754,7 +1754,7 @@ function wire() {
     scrolling = setTimeout(() => schedule(), 140);
   });
 
-  wireCrop({ state, el, canvas, showOriginal: () => adopt(state.original),
+  wireCrop({ state, el, showOriginal: () => adopt(state.original),
     restore: () => adopt(cropPixels(state.original, state.appliedCrop)), apply: cropTo,
     redraw: () => { buildPreview(); schedule(); }, updateControls: updateBatchControls });
   wireLoupe();

@@ -70,8 +70,42 @@ try {
   let before = await page.locator('#cropRect').boundingBox();
   await drag(before.x + before.width / 2, before.y + before.height / 2, frame.width / 8, 0);
   let after = await page.locator('#cropRect').boundingBox();
-  assert.ok(Math.abs(before.x - after.x) < 1, 'crop frame stays still when the photo moves');
-  assert.ok((await page.locator('#canvas').evaluate(el => new DOMMatrix(getComputedStyle(el).transform).m41)) > 0);
+  const followsPointer = Math.abs(after.x - before.x - frame.width / 8) < 2;
+  const cropDimensions = await page.locator('#cropSize').textContent();
+  const canvasBeforeZoom = await page.locator('#canvas').boundingBox();
+  await page.mouse.move(after.x + after.width / 2, after.y + after.height / 2);
+  await page.mouse.wheel(0, -240);
+  const wheelZooms = await page.waitForFunction(width => document.getElementById('canvas').getBoundingClientRect().width > width * 1.1,
+    canvasBeforeZoom.width, { timeout: 2000 }).then(() => true, () => false);
+  assert.deepEqual({ followsPointer, wheelZooms }, { followsPointer: true, wheelZooms: true }, 'crop frame follows the pointer and wheel zoom works during crop');
+  assert.equal(await page.locator('#cropSize').textContent(), cropDimensions, 'zoom preserves original crop dimensions');
+  assert.equal(await page.locator('#zoom').isEnabled(), true, 'Fit/100% works during crop');
+  await page.mouse.wheel(0, -650);
+  await page.waitForFunction(width => document.getElementById('canvas').getBoundingClientRect().width > width * 2,
+    canvasBeforeZoom.width);
+  const scrollBefore = await page.locator('#stage').evaluate(el => ({ x: el.scrollLeft, y: el.scrollTop }));
+  await page.keyboard.down('Space');
+  await drag(720, 420, -60, -35);
+  await page.keyboard.up('Space');
+  const scrollAfter = await page.locator('#stage').evaluate(el => ({ x: el.scrollLeft, y: el.scrollTop }));
+  assert.ok(scrollAfter.x > scrollBefore.x + 50 && scrollAfter.y > scrollBefore.y + 25, 'Space-drag pans the zoomed image');
+  assert.equal(await page.locator('#cropSize').textContent(), cropDimensions, 'panning does not change crop dimensions');
+  assert.equal(await page.locator('#cropOverlay').isVisible(), true, 'releasing Space does not toggle the focused Crop button');
+  await page.locator('#zoom').click();
+  await page.waitForFunction(width => Math.abs(document.getElementById('canvas').getBoundingClientRect().width - width) < 2, canvasBeforeZoom.width);
+  // Move left as well, ending at original x=100 for the exported-pixel assertions below.
+  frame = await page.locator('#cropOverlay').boundingBox();
+  before = await page.locator('#cropRect').boundingBox();
+  await drag(before.x + before.width / 2, before.y + before.height / 2, -frame.width / 4, 0);
+  after = await page.locator('#cropRect').boundingBox();
+  assert.ok(Math.abs(after.x - before.x + frame.width / 4) < 2, 'crop frame moves left');
+  before = after;
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowDown');
+  after = await page.locator('#cropRect').boundingBox();
+  assert.ok(after.x > before.x && after.y > before.y, 'arrow keys move the selection in their labelled direction');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowUp');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.getElementById('cropOverlay').hidden);
   await page.waitForFunction(() => document.getElementById('status').textContent.startsWith('400 × 300'));
@@ -175,7 +209,7 @@ try {
     await page.screenshot({ path: process.env.DARKROOM_SCREENSHOT });
   }
   assert.deepEqual(errors, []);
-  console.log('PASS: multi-file drop and picker, per-image crops, original recovery, ratios, resize, keyboard, stationary frame, actual exported pixels, unsupported files and mobile controls.');
+  console.log('PASS: multi-file import, per-image crops, original recovery, ratios, crop movement, wheel zoom, Space-drag pan, keyboard, actual PNG/ZIP output and mobile controls.');
 } finally {
   await browser.close();
 }

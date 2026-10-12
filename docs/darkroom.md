@@ -77,7 +77,8 @@ clipped channel left behind, the magenta or cyan cast of a channel that hit 255 
 Images can be dropped anywhere on the page or opened together through either file picker. Each image
 keeps its own filters and crop; Save all exports those individual results in a ZIP. Invalid files are
 reported without replacing the current image. Crop works in original pixels and retains the original:
-reopening it lets you expand the frame or Reset it. Drag inside a smaller frame to move the photo,
+reopening it lets you expand the frame or Reset it. Drag inside a smaller frame to move the selection;
+the wheel zooms the view without changing the selected pixels, and Space-drag pans the zoomed view. You can
 choose a ratio or hold Shift to constrain it, and hold Alt to resize from the centre. C opens Crop,
 Enter or double-click applies it, and Escape cancels it without closing the editor.
 

@@ -215,6 +215,8 @@ body.editing .viewer canvas,
 /* Crop ------------------------------------------------------------------ */
 
 .crop-overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; user-select: none; }
+.crop-hand .crop-overlay, .crop-hand .crop-overlay * { cursor: grab; }
+.crop-panning, .crop-panning .crop-overlay, .crop-panning .crop-overlay * { cursor: grabbing; }
 #darkroom.is-cropping .loupe-mark { display: none !important; }
 #darkroom.is-cropping .panel, #darkroom.is-cropping .inspector { display: none !important; }
 body.editing #darkroom.is-cropping .stage {
