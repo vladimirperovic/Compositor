@@ -74,6 +74,18 @@ clipped channel left behind, the magenta or cyan cast of a channel that hit 255 
 
 ## The browser version
 
+Images can be dropped anywhere on the page or opened together through either file picker. Each image
+keeps its own filters and crop; Save all exports those individual results in a ZIP. Invalid files are
+reported without replacing the current image. Crop works in original pixels and retains the original:
+reopening it lets you expand the frame or Reset it. Drag inside a smaller frame to move the photo,
+choose a ratio or hold Shift to constrain it, and hold Alt to resize from the centre. C opens Crop,
+Enter or double-click applies it, and Escape cancels it without closing the editor.
+
+Browser regression checks, after building: `node scripts/tests/web-crop.test.mjs`,
+`node scripts/tests/web-batch.test.mjs` and `node scripts/tests/web-editor.test.mjs` (Playwright required;
+`PLAYWRIGHT_MODULE` can point to an existing installation's `index.mjs`). The browser test exercises
+the built files under their CSP and verifies actual PNG pixels and per-image dimensions inside a ZIP.
+
 The same core runs on the web, because it is plain C with exactly one platform dependency: the
 `dispatch_apply_f` calls that spread each pass across cores. `web/wasm/dispatch/dispatch.h` stands in for
 them — a serial loop by default, a pool of pthreads when compiled with `-pthread` — and the pixels come out

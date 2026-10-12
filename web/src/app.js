@@ -5,6 +5,7 @@ import { EFFECTS, GROUPS, ORDER, PRESETS, byKind, freshSettings, isNeutral, sett
 import { copySettings, readPresets, matchingPreset, writePreset } from './saved-presets.js?v=%%V%%';
 import { exportImages } from './batch-export.js?v=%%V%%';
 import { checkCancelled } from './zip.js?v=%%V%%';
+import { wireCrop } from './crop-ui.js?v=%%V%%';
 
 const PREVIEW_LIMIT = 3_500_000;  // preview pixels; beyond this the screen copy is scaled down further
 
@@ -14,6 +15,8 @@ const context = canvas.getContext('2d', { willReadFrequently: true });
 
 const state = {
   source: null,        // { width, height, data } straight alpha, full resolution
+  original: null,      // unchanged pixels; reopening Crop can recover every edge
+  appliedCrop: null,   // absolute coordinates in original
   opaque: true,
   preview: null,       // the same image at screen size
   previewScale: 1,
@@ -318,6 +321,7 @@ function enterEditing() {
 }
 
 function leave() {
+  if (state.cropping) el('cropCancel').click();
   document.body.classList.remove('editing');
   document.documentElement.style.overflow = '';
   el('leave').querySelector('span').textContent = 'Edit image';
@@ -478,7 +482,7 @@ function paint() {
       return;
     }
     context.putImageData(new ImageData(data, width, height), region.x, region.y);
-    if (!state.split || !untouched) return;
+    if (state.cropping || !state.split || !untouched) return;
     const cut = Math.round(whole.width * state.splitAt);
     const before = Math.min(width, Math.max(0, cut - region.x));
     if (before > 0) {
@@ -493,7 +497,7 @@ function paint() {
   canvas.style.width = `${displayWidth(width, height)}px`;
   const untouched = originalAt(width, height);
   context.putImageData(new ImageData(state.holding && untouched ? untouched : data, width, height), 0, 0);
-  if (state.holding || !state.split || !untouched) return;
+  if (state.cropping || state.holding || !state.split || !untouched) return;
   const cut = Math.round(width * state.splitAt);
   if (cut > 0) context.putImageData(new ImageData(untouched, width, height), 0, 0, 0, 0, cut, height);
   drawDivider(cut, 0, height);
@@ -584,7 +588,7 @@ async function run() {
                                  `preview${state.previewToken}${image === state.draft ? '-draft' : ''}`);
       if (state.source !== source) return;
       show(data, image.width, image.height);
-      if (!state.quick && batch.active) updateEditedThumbnail(batch.active, data, image.width, image.height);
+      if (!state.quick && !state.cropping && batch.active) updateEditedThumbnail(batch.active, data, image.width, image.height);
     }
     report(performance.now() - started);
     renderLoupe();
@@ -865,8 +869,11 @@ async function read(file, entry = null) {
   let source = await decodeImage(file);
   if (ticket !== openTicket) return;
   if (entry && !batch.entries.includes(entry)) return;
+  if (state.cropping) el('cropCancel').click();
   captureBatchSettings();
   batch.active = entry;
+  state.original = source;
+  state.appliedCrop = entry?.crop ? { ...entry.crop } : null;
   if (entry) {
     source = cropPixels(source, entry.crop);
     state.settings = copySettings(entry.settings);
@@ -877,7 +884,6 @@ async function read(file, entry = null) {
     refreshPanel();
   }
   refreshBatchSelection();
-  if (state.cropping) el('cropCancel').click();
   state.fileSize = file.size;
   adopt(source);
 }
@@ -915,11 +921,10 @@ function adopt(source) {
 }
 
 function cropTo(rect) {
-  if (batch.active) {
-    const previous = batch.active.crop;
-    batch.active.crop = { ...rect, x: (previous?.x || 0) + rect.x, y: (previous?.y || 0) + rect.y };
-  }
-  adopt(cropPixels(state.source, rect));
+  const whole = rect.x === 0 && rect.y === 0 && rect.w === state.original.width && rect.h === state.original.height;
+  state.appliedCrop = whole ? null : { ...rect };
+  if (batch.active) batch.active.crop = state.appliedCrop;
+  adopt(cropPixels(state.original, state.appliedCrop));
 }
 
 function cropPixels(source, rect) {
@@ -979,6 +984,7 @@ function captureBatchSettings() {
 }
 
 function refreshBatchSelection() {
+  updateBatchControls();
   for (const entry of batch.entries) {
     entry.button.classList.toggle('selected', entry === batch.active);
     entry.button.classList.toggle('loading', entry === batch.loading);
@@ -1047,7 +1053,7 @@ async function selectBatchImage(entry) {
     if (batch.loading) {
       openTicket += 1;
       batch.loading = null;
-      el('saveAll').disabled = !!batch.controller;
+      updateBatchControls();
       refreshBatchSelection();
     }
     return;
@@ -1065,7 +1071,7 @@ async function selectBatchImage(entry) {
   } finally {
     if (batch.loading === entry) {
       batch.loading = null;
-      el('saveAll').disabled = !!batch.controller;
+      updateBatchControls();
       refreshBatchSelection();
     }
   }
@@ -1076,6 +1082,54 @@ function clearBatchDownload() {
   batch.url = null;
   el('batchDownload').hidden = true;
   el('batchDownload').removeAttribute('href');
+}
+
+function importFiles(files) {
+  const notice = el('importNotice');
+  if (batch.controller) {
+    notice.textContent = 'Wait for the ZIP export to finish, or cancel it, then drop your images again.';
+    notice.hidden = false;
+    return;
+  }
+  const images = Array.from(files).filter(file => file.type.startsWith('image/')
+    || (!file.type && /\.(jpe?g|png|webp|avif|gif|bmp|tiff?|heic|heif)$/i.test(file.name)));
+  const skipped = files.length - images.length;
+  notice.textContent = skipped ? `${skipped} non-image file${skipped === 1 ? '' : 's'} skipped. Choose photos your browser can read.` : '';
+  notice.hidden = !skipped;
+  chooseBatch(images);
+}
+
+function wireFileDrop() {
+  const hint = el('fileDrop');
+  let depth = 0;
+  const isFiles = event => Array.from(event.dataTransfer?.types || []).includes('Files');
+  const clear = () => { depth = 0; hint.hidden = true; };
+  // The host page, toolbar and both panels are all valid drop targets.
+  document.addEventListener('dragenter', event => {
+    if (!isFiles(event)) return;
+    event.preventDefault();
+    depth += 1;
+    hint.hidden = false;
+    hint.textContent = batch.controller ? 'Finish or cancel the ZIP export before adding images' : 'Drop images to open them · each keeps its own edits';
+  });
+  document.addEventListener('dragover', event => {
+    if (!isFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = batch.controller ? 'none' : 'copy';
+  });
+  document.addEventListener('dragleave', event => {
+    if (!isFiles(event)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth || !event.relatedTarget) clear();
+  });
+  document.addEventListener('drop', event => {
+    clear();
+    if (!isFiles(event)) return;
+    event.preventDefault();
+    importFiles(event.dataTransfer.files);
+  });
+  document.addEventListener('dragend', clear);
+  window.addEventListener('blur', clear);
 }
 
 function chooseBatch(files) {
@@ -1118,11 +1172,23 @@ function chooseBatch(files) {
   el('panelToggle').classList.add('active');
   scrollHints();
   loadThumbnails(added);
-  selectBatchImage(added[0]);
+  // A damaged first file must not prevent the readable images behind it from opening.
+  (async () => {
+    for (const entry of added) {
+      const opening = selectBatchImage(entry);
+      const ticket = openTicket;
+      await opening;
+      if (ticket !== openTicket || !batch.entries.includes(entry) || batch.active === entry) break;
+    }
+  })();
+}
+
+function updateBatchControls() {
+  el('saveAll').disabled = state.cropping || !!batch.controller || !!batch.loading || !batch.entries.length;
 }
 
 async function saveAll() {
-  if (batch.controller || batch.loading || !batch.entries.length) return;
+  if (state.cropping || batch.controller || batch.loading || !batch.entries.length) return;
   captureBatchSettings();
   const controller = new AbortController();
   batch.controller = controller;
@@ -1193,7 +1259,7 @@ async function saveAll() {
   } finally {
     batch.controller = null;
     for (const id of ['openMultiple', 'saveAll', 'clearBatch']) el(id).disabled = false;
-    el('saveAll').disabled = !!batch.loading;
+    updateBatchControls();
     el('cancelBatch').hidden = true;
     scrollHints();
   }
@@ -1202,7 +1268,7 @@ async function saveAll() {
 function wireBatch() {
   el('openMultiple').addEventListener('click', () => el('multipleFiles').click());
   el('multipleFiles').addEventListener('change', event => {
-    chooseBatch(event.target.files);
+    importFiles(event.target.files);
     event.target.value = '';
   });
   el('saveAll').addEventListener('click', saveAll);
@@ -1494,18 +1560,11 @@ function wire() {
   el('pick').addEventListener('click', () => el('file').click());
   el('open').addEventListener('click', () => el('file').click());
 
-  el('file').addEventListener('change', event => { open(event.target.files[0], true); event.target.value = ''; });
+  el('file').addEventListener('change', event => { importFiles(event.target.files); event.target.value = ''; });
   el('example').addEventListener('click', loadExample);
 
   const stage = el('stage');
-  stage.addEventListener('dragover', event => { event.preventDefault(); stage.classList.add('dragging'); });
-  stage.addEventListener('dragleave', () => stage.classList.remove('dragging'));
-  stage.addEventListener('drop', event => {
-    event.preventDefault();
-    stage.classList.remove('dragging');
-    if (event.dataTransfer.files.length > 1) chooseBatch(event.dataTransfer.files);
-    else open(event.dataTransfer.files[0], true);
-  });
+  wireFileDrop();
 
   const panels = shown => {
     document.body.classList.toggle('panel-hidden', !shown);
@@ -1530,6 +1589,7 @@ function wire() {
     paintLoupe();
   };
   addEventListener('keydown', event => {
+    if (state.cropping || event.defaultPrevented) return;
     if (event.key === 'b' && !event.repeat && !event.target.closest?.('input, select, textarea, [contenteditable]')) hold(true);
   });
   addEventListener('keyup', event => { if (event.key === 'b') hold(false); });
@@ -1675,6 +1735,7 @@ function wire() {
   });
 
   addEventListener('keydown', event => {
+    if (state.cropping || event.defaultPrevented) return;
     if (event.key === 'Escape' && document.body.classList.contains('editing')) leave();
     // Tab still moves between controls when one of them has the focus; it only puts the panels away
     // when the keyboard is not being used to navigate them.
@@ -1693,7 +1754,9 @@ function wire() {
     scrolling = setTimeout(() => schedule(), 140);
   });
 
-  wireCrop();
+  wireCrop({ state, el, canvas, showOriginal: () => adopt(state.original),
+    restore: () => adopt(cropPixels(state.original, state.appliedCrop)), apply: cropTo,
+    redraw: () => { buildPreview(); schedule(); }, updateControls: updateBatchControls });
   wireLoupe();
   wireInspectorResize();
   wireBatch();
@@ -1709,119 +1772,13 @@ function wire() {
   if (typeof ResizeObserver === 'function') new ResizeObserver(measureChrome).observe(el('toolbar'));
 }
 
-const HANDLES = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se'];
-
-function wireCrop() {
-  const overlay = el('cropOverlay');
-  const rect = el('cropRect');
-  let box = null;     // the crop, in the overlay's own pixels
-  let drag = null;
-
-  // The frame: a dashed rectangle with a square at each corner and side, and thirds drawn inside it.
-  for (const line of ['v1', 'v2', 'h1', 'h2']) {
-    const guide = document.createElement('div');
-    guide.className = `third ${line[0]}`;
-    guide.style[line[0] === 'v' ? 'left' : 'top'] = line[1] === '1' ? '33.333%' : '66.666%';
-    rect.append(guide);
-  }
-  for (const side of ['n', 'e', 's', 'w']) {
-    const edge = document.createElement('div');
-    edge.className = `crop-edge ${side}`;
-    edge.dataset.handle = side;
-    rect.append(edge);
-  }
-  for (const corner of HANDLES) {
-    const handle = document.createElement('div');
-    handle.className = `crop-handle ${corner}`;
-    handle.dataset.handle = corner;
-    rect.append(handle);
-  }
-
-  const place = () => {
-    Object.assign(rect.style, {
-      display: 'block', left: `${box.x}px`, top: `${box.y}px`,
-      width: `${box.w}px`, height: `${box.h}px`,
-    });
-    state.cropRect = { ...box, frame: { width: overlay.clientWidth, height: overlay.clientHeight } };
-  };
-
-  const wholeImage = () => {
-    box = { x: 0, y: 0, w: overlay.clientWidth, h: overlay.clientHeight };
-    place();
-  };
-
-  el('cropMode').addEventListener('click', () => {
-    state.cropping = !state.cropping;
-    overlay.hidden = !state.cropping;
-    el('cropActions').hidden = !state.cropping;
-    el('cropMode').classList.toggle('active', state.cropping);
-    if (state.cropping) wholeImage();
-    else { rect.style.display = 'none'; state.cropRect = null; }
-  });
-
-  overlay.addEventListener('pointerdown', event => {
-    const frame = overlay.getBoundingClientRect();
-    const at = { x: event.clientX - frame.left, y: event.clientY - frame.top };
-    const handle = event.target.dataset ? event.target.dataset.handle : null;
-    const inside = at.x >= box.x && at.x <= box.x + box.w && at.y >= box.y && at.y <= box.y + box.h;
-    drag = { at, from: { ...box }, handle, mode: handle ? 'resize' : inside ? 'move' : 'draw' };
-    if (drag.mode === 'draw') { box = { x: at.x, y: at.y, w: 0, h: 0 }; place(); }
-    overlay.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  });
-
-  overlay.addEventListener('pointermove', event => {
-    if (!drag) return;
-    const frame = overlay.getBoundingClientRect();
-    const x = Math.min(Math.max(0, event.clientX - frame.left), frame.width);
-    const y = Math.min(Math.max(0, event.clientY - frame.top), frame.height);
-
-    if (drag.mode === 'move') {
-      box.x = Math.min(Math.max(0, drag.from.x + x - drag.at.x), frame.width - drag.from.w);
-      box.y = Math.min(Math.max(0, drag.from.y + y - drag.at.y), frame.height - drag.from.h);
-    } else if (drag.mode === 'draw') {
-      box = { x: Math.min(drag.at.x, x), y: Math.min(drag.at.y, y),
-              w: Math.abs(x - drag.at.x), h: Math.abs(y - drag.at.y) };
-    } else {
-      // Each letter in the handle's name moves that edge; the opposite ones stay where they are.
-      const edges = { left: drag.from.x, top: drag.from.y,
-                      right: drag.from.x + drag.from.w, bottom: drag.from.y + drag.from.h };
-      if (drag.handle.includes('w')) edges.left = Math.min(x, edges.right - 16);
-      if (drag.handle.includes('e')) edges.right = Math.max(x, edges.left + 16);
-      if (drag.handle.includes('n')) edges.top = Math.min(y, edges.bottom - 16);
-      if (drag.handle.includes('s')) edges.bottom = Math.max(y, edges.top + 16);
-      box = { x: edges.left, y: edges.top, w: edges.right - edges.left, h: edges.bottom - edges.top };
-    }
-    place();
-  });
-
-  for (const event of ['pointerup', 'pointercancel']) overlay.addEventListener(event, () => { drag = null; });
-
-  el('cropCancel').addEventListener('click', () => el('cropMode').click());
-  el('cropApply').addEventListener('click', () => {
-    const chosen = state.cropRect;
-    if (!chosen || chosen.w < 8 || chosen.h < 8) return;
-    const scale = state.source.width / chosen.frame.width;
-    const crop = {
-      x: Math.round(chosen.x * scale),
-      y: Math.round(chosen.y * scale),
-      w: Math.round(chosen.w * scale),
-      h: Math.round(chosen.h * scale),
-    };
-    crop.x = Math.max(0, Math.min(crop.x, state.source.width - 1));
-    crop.y = Math.max(0, Math.min(crop.y, state.source.height - 1));
-    crop.w = Math.max(1, Math.min(crop.w, state.source.width - crop.x));
-    crop.h = Math.max(1, Math.min(crop.h, state.source.height - crop.y));
-    el('cropMode').click();
-    cropTo(crop);
-  });
-}
-
 /// The studio's own render, so the page opens with something to work on.
 async function loadExample() {
+  const ticket = openTicket;
   try {
     const response = await fetch(new URL('sample.jpg?v=%%V%%', import.meta.url));
-    if (response.ok) await open(new File([await response.blob()], 'example.jpg', { type: 'image/jpeg' }));
+    const blob = response.ok ? await response.blob() : null;
+    if (blob && ticket === openTicket && !batch.entries.length) await open(new File([blob], 'example.jpg', { type: 'image/jpeg' }));
   } catch (error) {
     report(0, 'The example image could not be loaded — open one of your own.');
   }

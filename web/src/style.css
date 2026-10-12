@@ -165,7 +165,12 @@ body:not(.editing) .sheet { display: none; }
 .drop-note { font-size: 12px; line-height: 1.85; color: rgba(245, 241, 234, .48); margin: 0 0 8px; }
 .dropzone .link { color: var(--accent-light); }
 
-.stage.dragging { outline: 1px solid var(--accent-light); outline-offset: -10px; }
+.file-drop { position: fixed; inset: 12px; z-index: 30; display: grid; place-items: center;
+  pointer-events: none; border: 2px dashed var(--accent-light); border-radius: 18px;
+  background: rgba(14, 14, 16, .85); padding: 30px; color: var(--paper); font-size: 22px; text-align: center; }
+.import-notice { position: fixed; top: calc(var(--toolbar-height) + 12px); left: 50%; transform: translateX(-50%);
+  z-index: 12; max-width: min(600px, 90vw); padding: 12px 18px; background: #30271b; color: var(--paper);
+  border: 1px solid var(--accent-light); border-radius: 12px; font-size: 13px; }
 
 .viewer { position: relative; margin: auto; line-height: 0; }
 .viewer canvas { display: block; max-width: 100%; height: auto; }
@@ -209,7 +214,13 @@ body.editing .viewer canvas,
 
 /* Crop ------------------------------------------------------------------ */
 
-.crop-overlay { position: absolute; inset: 0; cursor: crosshair; }
+.crop-overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; user-select: none; }
+#darkroom.is-cropping .loupe-mark { display: none !important; }
+#darkroom.is-cropping .panel, #darkroom.is-cropping .inspector { display: none !important; }
+body.editing #darkroom.is-cropping .stage {
+  padding: calc(var(--toolbar-height) + 24px) 26px calc(var(--crop-actions-height, 100px) + 55px);
+  overflow: hidden;
+}
 
 .crop-rect {
   position: absolute;
@@ -263,17 +274,24 @@ body.editing .viewer canvas,
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 760px;
+  max-width: calc(100vw - 24px);
   background: var(--glass);
   backdrop-filter: blur(18px);
   border: 1px solid var(--glass-line);
-  border-radius: 40px;
-  padding: 10px 10px 10px 22px;
+  border-radius: 18px;
+  padding: 12px;
   font-size: 11px;
   letter-spacing: .06em;
   color: var(--glass-text);
   z-index: 7;
 }
+.crop-actions label { display: flex; align-items: center; gap: 6px; }
+.crop-actions output { min-width: 105px; text-align: center; font-variant-numeric: tabular-nums; }
+.crop-hint { flex-basis: 100%; text-align: center; color: var(--glass-muted); font-size: 10px; line-height: 1.5; }
 
 /* Editing: the image fills the window, and the chrome floats over it ------ */
 
