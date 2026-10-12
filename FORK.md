@@ -12,12 +12,13 @@ features as a whole). So this fork carries them on top of every new upstream rel
 
 | Branch | Contents | Merged from |
 |---|---|---|
-| `main` | an exact copy of upstream's `main` | upstream `main` (fast-forward only) |
-| `studio` | the app we use: upstream, Darkroom, Enlarger, this file and the fork's scripts | `main` |
+| `main` | the published fork: Compositor, Darkroom and Enlarger | tested `studio` (fast-forward only) |
+| `studio` | development of the fork, including the browser editor | upstream `main` |
 | `feature/darkroom`, `feature/enlarger` | frozen snapshots of pull requests #71 and #73 | nothing |
 
-Everything now happens on `studio`. The two feature branches are kept only as a record of what was offered upstream;
-they are no longer merged into or updated. Keep `main` free of our commits so it always matches upstream.
+Development happens on `studio`; publish the tested version to `main`. Since 12 October 2026, `main` includes our
+features too. The two feature branches are kept only as a record of what was offered upstream;
+they are no longer merged into or updated. The original project's history is tracked by `upstream/main`.
 
 ## Remotes
 
@@ -33,15 +34,19 @@ git push -u origin main feature/darkroom feature/enlarger studio
 
 ```sh
 sh scripts/sync-upstream.sh
-git push origin main studio
+git push origin studio
 ```
 
-The script fetches upstream, fast-forwards `main`, merges it into `studio` and runs the C checks. Run the Swift suites
+The script fetches upstream, merges its `main` directly into `studio` and runs the C checks. It leaves our published
+`main` unchanged. Run the Swift suites
 too after larger upstream changes:
 
 ```sh
 COMPOSITOR_AI_MODEL_PATH=/path/RealESRGAN_x4plus.pth python3 scripts/test-swift.py --all
 ```
+
+After validation, publish with `git push origin studio:main` (without force). A non-fast-forward rejection means
+the branches need to be reconciled first; never replace either branch's history.
 
 ## Where our code touches upstream's
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Brings the original Compositor's latest main into this fork:
-#   upstream/main → main → studio
+#   upstream/main → studio (main remains the last published version of our fork)
 # feature/darkroom and feature/enlarger are frozen snapshots of the two pull requests and are left alone.
 # Stops at a merge conflict so it can be resolved (then run the script again); git rerere replays the
 # resolutions we have already made for the same conflicts.
@@ -15,12 +15,10 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 start=$(git branch --show-current)
 git fetch "$remote" --tags
-git checkout -q main
-git merge --ff-only "$remote/main"
 git config rerere.enabled true
 git config rerere.autoupdate true
 git checkout -q studio
-if ! git merge --no-edit main; then
+if ! git merge --no-edit "$remote/main"; then
     echo
     echo "Merge conflict on studio. Our code sits behind one-line \`darkroom…\` seams and in blocks marked"
     echo "\"MARK: - Darkroom (fork)\"; keeping both sides is almost always the answer. See FORK.md."
