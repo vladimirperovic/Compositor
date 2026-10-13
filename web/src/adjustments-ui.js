@@ -239,6 +239,9 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
       row(box, button('Reset this color', () => { colors.ranges[colorRange] = { hue: 0, saturation: 0, lightness: 0 }; commit(); refreshPanel(); }));
     }
     sync();
+    const list = box.querySelector('.local-layers'), selected = list?.querySelector('.selected');
+    // Only scroll the rebuilt layer list, keeping the surrounding settings in place.
+    if (selected) list.scrollTop += Math.max(0, selected.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom);
   }
   function endGesture(cancelled = false) {
     if (!gesture) return;
