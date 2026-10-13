@@ -8,7 +8,11 @@ they do not change the native macOS editor or require AI models or uploads.
 
 Local light supports up to 16 independent oval or brush layers. New layers use **Soft Light**;
 **Overlay** gives a stronger blend and **Normal** displays the white/black paint directly. Each layer has
-visibility, name, opacity, ordering and deletion controls. The implicit 50% grey background is neutral in
+visibility, name, opacity, ordering, duplication and deletion controls. The right-hand **Layers** list
+shows an oval-position thumbnail and each layer's blend mode and opacity. **+ Oval** adds another
+independent area; **Duplicate** copies the selected layer and its strokes without linking their edits.
+The inspector gives layers its full height while local editing is active; Done restores the loupe.
+The implicit 50% grey background is neutral in
 Soft Light and Overlay. White brush strokes lighten, black strokes darken, and Erase returns paint to
 neutral. Size, softness and stroke strength are adjustable. Ovals have signed Light / dark strength and
 softness, draggable centres and corner resize handles. Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z, or Undo/Redo, undo

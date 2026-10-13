@@ -49,6 +49,7 @@ try {
   };
   const drag = async (x, y, dx, dy) => { await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + dx, y + dy, { steps: 8 }); await page.mouse.up(); };
   await page.locator('#localLight').click();
+  assert.equal(await page.locator('#loupe').isVisible(), false, 'local editing reserves the inspector for layers');
   await page.locator('#addOval').click();
   assert.equal(await page.getByLabel('Blend mode').inputValue(), 'soft-light');
   await waitPixel(.5, .5, p => p[0] > 140);
@@ -72,6 +73,27 @@ try {
   await waitPixel(.68, .5, p => p[0] === 128);
   await page.getByLabel('Show Oval 1', { exact: true }).check();
   await waitPixel(.68, .5, p => p[0] > 160);
+  // Several differently positioned ovals stay independent in the layer stack.
+  await page.locator('#addOval').click();
+  await page.getByLabel('Layer name', { exact: true }).fill('Ceiling');
+  await page.getByLabel('Layer name', { exact: true }).press('Tab');
+  await range('Light / dark', -70);
+  await page.getByLabel('Blend mode').selectOption('overlay');
+  await drag(frame.x + frame.width * .5, frame.y + frame.height * .5, -frame.width * .3, -frame.height * .25);
+  await waitPixel(.2, .25, p => p[0] < 90);
+  await page.locator('#duplicateLocalLayer').click({ timeout: 1500 });
+  assert.equal(await page.getByLabel('Layer name', { exact: true }).inputValue(), 'Ceiling copy');
+  assert.equal(await page.locator('.local-layer').count(), 3);
+  await range('Layer opacity', 25);
+  await page.getByRole('button', { name: 'Ceiling', exact: true }).click();
+  assert.equal(await page.getByLabel('Layer opacity', { exact: true }).inputValue(), '100', 'copy opacity is independent');
+  assert.equal(await page.getByLabel('Light / dark', { exact: true }).inputValue(), '-70');
+  await page.getByRole('button', { name: 'Oval 1', exact: true }).click();
+  assert.equal(await page.getByLabel('Light / dark', { exact: true }).inputValue(), '35', 'each oval keeps its settings');
+  assert.ok(Math.abs((await page.locator('#localEllipse').boundingBox()).x - resized.x) < 1, 'adding and moving other ovals preserves the first');
+  await page.getByRole('button', { name: 'Ceiling copy', exact: true }).click(); await page.locator('#deleteLocalLayer').click();
+  await page.getByRole('button', { name: 'Ceiling', exact: true }).click(); await page.locator('#deleteLocalLayer').click();
+  assert.equal(await page.locator('.local-layer').count(), 1);
   await page.locator('#addBrush').click();
   await page.getByLabel('Brush action').selectOption('burn');
   await range('Brush strength', 100); await range('Brush size', 12);
@@ -89,6 +111,13 @@ try {
   await page.mouse.move(frame.x + frame.width * .4, frame.y + frame.height * .75); await page.mouse.down();
   await page.locator('#retouchOverlay').dispatchEvent('pointercancel', { pointerId: 1 }); await page.mouse.up();
   await waitPixel(.4, .75, p => p[0] === 128);
+  await page.locator('#duplicateLocalLayer').click();
+  frame = await page.locator('#retouchOverlay').boundingBox();
+  await page.mouse.click(frame.x + frame.width * .85, frame.y + frame.height * .75);
+  await waitPixel(.85, .75, p => p[0] > 160);
+  await page.locator('.local-layer.selected input[type="checkbox"]').uncheck();
+  await waitPixel(.85, .75, p => p[0] === 128); // copied strokes cannot mutate the original layer
+  await page.locator('#deleteLocalLayer').click();
   await page.screenshot({ path: join(tmpdir(), 'darkroom-retouch-desktop.png') });
   // Wheel and Space-pan remain available while painting is selected.
   const widthBefore = frame.width;

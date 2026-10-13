@@ -7,6 +7,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
   let history = [], future = [], baseline = '';
   let brush = { mode: 'dodge', size: 15, softness: 80, strength: 25 };
   let colorRange = 1;
+  const blends = [['soft-light', 'Soft Light'], ['overlay', 'Overlay'], ['normal', 'Normal']];
   const snapshot = () => JSON.stringify(state.adjustments);
   const selectedLayer = () => state.adjustments.layers.find(layer => layer.id === active);
   const crop = () => state.appliedCrop || { x: 0, y: 0, w: state.original?.width || 1, h: state.original?.height || 1 };
@@ -21,7 +22,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     if (baseline && baseline !== now) { history.push(baseline); history = history.slice(-40); future = []; }
     baseline = now;
     el('presets').value = '';
-    schedule(); syncHistory();
+    schedule(); syncHistory(); syncLayerRows();
   };
   function syncHistory() {
     const undo = el('retouchUndo'), redo = el('retouchRedo');
@@ -82,7 +83,21 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
       });
     }
     syncHistory();
+    syncLayerRows();
     if (changedMode && state.source && state.zoom === 'fit') redraw();
+  }
+  function syncLayerRows() {
+    for (const item of el('controls').querySelectorAll('.local-layer')) {
+      const layer = state.adjustments.layers.find(value => value.id === item.dataset.layerId);
+      if (!layer) continue;
+      item.classList.toggle('muted', !layer.enabled);
+      const summary = item.querySelector('.local-layer-summary');
+      summary.textContent = `${blends.find(([value]) => value === layer.blend)?.[1] || 'Normal'} · ${layer.opacity}%`;
+      const shape = item.querySelector('.layer-mask-shape');
+      if (layer.type === 'ellipse') Object.assign(shape.style, {
+        left: `${layer.x * 100}%`, top: `${layer.y * 100}%`, width: `${layer.rx * 200}%`, height: `${layer.ry * 200}%`,
+      });
+    }
   }
   function button(text, action, id) {
     const b = document.createElement('button'); b.type = 'button'; b.textContent = text;
@@ -113,14 +128,28 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     check.setAttribute('aria-label', label); check.addEventListener('change', () => { object.enabled = check.checked; commit(); });
     wrap.append(check, document.createTextNode(label)); box.append(wrap);
   }
+  function uniqueName(base) {
+    let name = base, suffix = 2;
+    while (state.adjustments.layers.some(layer => layer.name === name)) name = `${base} ${suffix++}`;
+    return name;
+  }
   function add(type) {
     if (state.adjustments.layers.length >= 16) return;
     const c = crop(), ow = state.original.width, oh = state.original.height;
-    const layer = { id: crypto.randomUUID(), name: `${type === 'ellipse' ? 'Oval' : 'Brush'} ${state.adjustments.layers.length + 1}`,
+    const layer = { id: crypto.randomUUID(), name: uniqueName(`${type === 'ellipse' ? 'Oval' : 'Brush'} ${state.adjustments.layers.length + 1}`),
       type, enabled: true, blend: 'soft-light', opacity: 100,
       x: (c.x + c.w / 2) / ow, y: (c.y + c.h / 2) / oh, rx: c.w / ow * .22, ry: c.h / oh * .22,
       softness: 80, tone: 35, strokes: [] };
     state.adjustments.layers.push(layer); active = layer.id; commit(); refreshPanel();
+  }
+  function duplicate() {
+    endGesture(true);
+    const layer = selectedLayer(), layers = state.adjustments.layers;
+    if (!layer || layers.length >= 16) return;
+    const copy = structuredClone(layer);
+    copy.id = crypto.randomUUID(); copy.name = uniqueName(`${layer.name} copy`);
+    layers.splice(layers.indexOf(layer) + 1, 0, copy); active = copy.id;
+    commit(); refreshPanel();
   }
   function render(box, key) {
     box.classList.remove('disabled');
@@ -128,47 +157,63 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     row(box, button('Undo', () => undo(), 'retouchUndo'), button('Redo', () => undo(true), 'retouchRedo'),
       button('Done', () => select(0), 'retouchDone'));
     if (key === 'local') {
-      note(box, 'Paint light on a separate layer. White lightens, black darkens; Soft Light is gentle, Overlay stronger. Original pixels stay intact.');
+      const heading = document.createElement('div'); heading.className = 'local-layers-heading';
+      const title = document.createElement('h3'); title.textContent = 'Layers';
+      const count = document.createElement('span'); count.textContent = `${state.adjustments.layers.length} / 16`;
+      count.title = 'Up to 16 independent local light layers'; heading.append(title, count); box.append(heading);
+      note(box, 'Add an oval for each area you want to adjust. Select a layer below to edit it independently.');
       const actions = row(box, button('+ Oval', () => add('ellipse'), 'addOval'), button('+ Brush layer', () => add('brush'), 'addBrush'));
       for (const b of actions.children) b.disabled = state.adjustments.layers.length >= 16;
       const list = document.createElement('div'); list.className = 'local-layers'; list.setAttribute('aria-label', 'Local light layers');
       for (const layer of [...state.adjustments.layers].reverse()) {
         const item = document.createElement('div'); item.className = 'local-layer'; item.classList.toggle('selected', layer.id === active);
+        item.dataset.layerId = layer.id;
         toggle(item, `Show ${layer.name}`, layer);
-        item.append(button(layer.name, () => { endGesture(true); active = layer.id; refreshPanel(); })); list.append(item);
+        const pick = button('', () => { endGesture(true); active = layer.id; refreshPanel(); });
+        pick.setAttribute('aria-label', layer.name); pick.setAttribute('aria-pressed', String(layer.id === active));
+        const mask = document.createElement('span'); mask.className = `layer-mask ${layer.type}`; mask.setAttribute('aria-hidden', 'true');
+        const shape = document.createElement('span'); shape.className = 'layer-mask-shape'; mask.append(shape);
+        const caption = document.createElement('span'); caption.className = 'local-layer-caption';
+        const name = document.createElement('strong'); name.textContent = layer.name;
+        const summary = document.createElement('span'); summary.className = 'local-layer-summary'; caption.append(name, summary);
+        pick.append(mask, caption); item.append(pick); list.append(item);
       }
       box.append(list);
       const layer = selectedLayer();
       if (layer) {
-        const name = document.createElement('input'); name.type = 'text'; name.maxLength = 80; name.value = layer.name;
-        name.setAttribute('aria-label', 'Layer name'); name.className = 'layer-name';
-        name.addEventListener('change', () => { layer.name = name.value.trim() || 'Local light'; commit(); refreshPanel(); }); box.append(name);
-        choice(box, 'Blend mode', [['soft-light', 'Soft Light'], ['overlay', 'Overlay'], ['normal', 'Normal']], layer.blend,
-          value => { layer.blend = value; commit(); });
-        range(box, 'Layer opacity', layer, 'opacity', 0, 100);
-        if (layer.type === 'ellipse') {
-          range(box, 'Light / dark', layer, 'tone', -100, 100);
-          range(box, 'Oval softness', layer, 'softness', 0, 100);
-          note(box, 'Drag the oval to move it; drag a corner to resize. Negative light darkens. Wheel zooms; Space + drag pans.');
-        } else {
-          choice(box, 'Brush action', [['dodge', 'White · lighten'], ['burn', 'Black · darken'], ['erase', 'Erase to neutral']], brush.mode,
-            value => { brush.mode = value; });
-          range(box, 'Brush size', brush, 'size', 1, 100, () => {}, () => {});
-          range(box, 'Brush softness', brush, 'softness', 0, 100, () => {}, () => {});
-          range(box, 'Brush strength', brush, 'strength', 1, 100, () => {}, () => {});
-          note(box, 'Paint on the image. Size is a percentage of the original image’s shorter side. X swaps white / black; Space + drag pans. Each stroke can be undone.');
-        }
         const index = state.adjustments.layers.indexOf(layer);
         const move = delta => {
           const target = index + delta;
           if (target < 0 || target >= state.adjustments.layers.length) return;
           state.adjustments.layers.splice(index, 1); state.adjustments.layers.splice(target, 0, layer); commit(); refreshPanel();
         };
-        const up = button('Move up', () => move(1)); up.disabled = index === state.adjustments.layers.length - 1;
-        const down = button('Move down', () => move(-1)); down.disabled = index === 0;
-        row(box, up, down, button('Delete layer', () => {
+        const up = button('↑', () => move(1)); up.setAttribute('aria-label', 'Move up'); up.title = 'Move layer up'; up.disabled = index === state.adjustments.layers.length - 1;
+        const down = button('↓', () => move(-1)); down.setAttribute('aria-label', 'Move down'); down.title = 'Move layer down'; down.disabled = index === 0;
+        const copy = button('Duplicate', duplicate, 'duplicateLocalLayer'); copy.disabled = state.adjustments.layers.length >= 16;
+        row(box, up, down, copy, button('Delete layer', () => {
           state.adjustments.layers.splice(index, 1); active = state.adjustments.layers.at(-1)?.id; commit(); refreshPanel();
-        }, 'deleteLocalLayer'));
+        }, 'deleteLocalLayer')).classList.add('local-layer-actions');
+        const properties = document.createElement('section'); properties.className = 'local-layer-properties';
+        properties.setAttribute('aria-label', 'Selected layer settings'); box.append(properties);
+        const label = document.createElement('label'); label.className = 'control'; label.textContent = 'Layer name';
+        const name = document.createElement('input'); name.type = 'text'; name.maxLength = 80; name.value = layer.name;
+        name.setAttribute('aria-label', 'Layer name'); name.className = 'layer-name';
+        name.addEventListener('change', () => { layer.name = name.value.trim() || 'Local light'; commit(); refreshPanel(); }); label.append(name); properties.append(label);
+        choice(properties, 'Blend mode', blends, layer.blend,
+          value => { layer.blend = value; commit(); });
+        range(properties, 'Layer opacity', layer, 'opacity', 0, 100);
+        if (layer.type === 'ellipse') {
+          range(properties, 'Light / dark', layer, 'tone', -100, 100);
+          range(properties, 'Oval softness', layer, 'softness', 0, 100);
+          note(properties, 'Drag this oval to move it; drag a corner to resize. Negative light darkens. Add another oval with + Oval.');
+        } else {
+          choice(properties, 'Brush action', [['dodge', 'White · lighten'], ['burn', 'Black · darken'], ['erase', 'Erase to neutral']], brush.mode,
+            value => { brush.mode = value; });
+          range(properties, 'Brush size', brush, 'size', 1, 100, () => updateCursor(), () => {});
+          range(properties, 'Brush softness', brush, 'softness', 0, 100, () => {}, () => {});
+          range(properties, 'Brush strength', brush, 'strength', 1, 100, () => {}, () => {});
+          note(properties, 'Paint on the image. X swaps white / black; Space + drag pans. Each stroke can be undone.');
+        }
       } else note(box, 'Add an oval or a brush layer to begin. Up to 16 independent layers.');
     } else if (key === 'wb') {
       const w = state.adjustments.whiteBalance;

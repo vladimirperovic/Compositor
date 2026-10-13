@@ -35,16 +35,31 @@
 .retouch-button:hover { background: rgba(215, 181, 132, .16); }
 .retouch-button:disabled { opacity: .35; cursor: default; }
 .retouch-toggle { display: flex; gap: 8px; align-items: center; font-size: 12px; margin: 10px 0; }
-.local-layers { display: grid; gap: 4px; max-height: 160px; overflow: auto; margin: 12px 0; }
+.local-layers-heading { display: flex; align-items: baseline; justify-content: space-between; margin-top: 22px; }
+.local-layers-heading h3 { margin: 0; font-size: 16px; font-weight: 500; }
+.local-layers-heading > span { font-size: 11px; color: var(--glass-muted); font-variant-numeric: tabular-nums; }
+.local-layers-heading + .summary { margin-top: 8px; }
+.local-layers { display: grid; gap: 4px; max-height: 232px; overflow-y: auto; margin: 12px 0 8px; scrollbar-gutter: stable; }
 .local-layer { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border: 1px solid var(--glass-line); border-radius: 6px; }
-.local-layer.selected { border-color: var(--accent-light); }
+.local-layer.selected { border-color: var(--accent-light); background: rgba(215, 181, 132, .09); }
+.local-layer.muted .local-layer-caption, .local-layer.muted .layer-mask { opacity: .45; }
 .local-layer .retouch-toggle { font-size: 0; margin: 0; }
-.local-layer .retouch-button { flex: 1; text-align: left; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.layer-name { width: 100%; background: transparent; border: 1px solid var(--glass-line); padding: 8px; border-radius: 6px; font-size: 12px; }
+.local-layer .retouch-button { display: flex; gap: 9px; align-items: center; flex: 1; min-width: 0; padding: 5px 2px; text-align: left; border: 0; }
+.local-layer-caption { display: grid; gap: 4px; min-width: 0; }
+.local-layer-caption strong { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-layer-summary { font-size: 10px; color: var(--glass-muted); }
+.layer-mask { position: relative; flex: 0 0 36px; height: 30px; overflow: hidden; border: 1px solid var(--glass-line); border-radius: 3px; background: #101012; }
+.layer-mask-shape { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; background: radial-gradient(ellipse, #fff 0%, #fff9 35%, #fff0 72%); }
+.layer-mask.brush .layer-mask-shape { left: 50%; top: 50%; width: 90%; height: 40%; transform: translate(-50%, -50%) rotate(-30deg); }
+.local-layer-actions { margin-top: 0; }
+.local-layer-actions .retouch-button { padding: 7px 8px; }
+.local-layer-properties { border-top: 1px solid var(--glass-line); margin-top: 16px; padding-top: 16px; }
+.layer-name { display: block; width: 100%; margin-top: 7px; background: transparent; border: 1px solid var(--glass-line); padding: 8px; border-radius: 6px; font-size: 12px; }
 .retouch-controls .control { display: block; }
 .retouch-controls select { margin-top: 7px; }
 .retouch-controls .control > select { display: block; width: 100%; }
 #darkroom.is-retouching .loupe-mark { display: none !important; }
+body.editing #darkroom.is-retouching .loupe { display: none; }
 .retouch-overlay { position: absolute; inset: 0; overflow: hidden; touch-action: none; user-select: none; cursor: crosshair; }
 .retouch-overlay.hand { cursor: grab; }
 .retouch-overlay.hand.painting { cursor: grabbing; }
