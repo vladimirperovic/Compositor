@@ -25,6 +25,7 @@ const state = {
   settings: freshSettings(),
   adjustments: freshAdjustments(),
   retouching: false,
+  retouchGesture: false,
   selected: 0,
   seed: (Math.random() * 1e9) | 0,
   zoom: 'fit',         // 'fit', or 'actual': drawn at `scale` screen points per image pixel
@@ -507,6 +508,9 @@ function setZoom(scale, anchor = null) {
 function paint() {
   if (!state.shown) return;
   const { data, width, height, region } = state.shown;
+  // Draft pixels may round to a different ratio. The on-screen image (and pointer overlay)
+  // always belongs to the source geometry, regardless of the bitmap currently being painted.
+  canvas.style.aspectRatio = `${state.source.width} / ${state.source.height}`;
 
   if (region) {
     // A piece of the whole image: the canvas keeps the image's own size, showing the untouched picture
@@ -536,7 +540,7 @@ function paint() {
 
   canvas.width = width;
   canvas.height = height;
-  canvas.style.width = `${displayWidth(width, height)}px`;
+  canvas.style.width = `${displayWidth(state.source.width, state.source.height)}px`;
   const untouched = originalAt(width, height);
   context.putImageData(new ImageData(state.holding && untouched ? untouched : data, width, height), 0, 0);
   if (state.cropping || state.holding || !state.split || !untouched) return;
@@ -601,7 +605,10 @@ async function run() {
   if (!state.source) return;
   rendering = true;
   const heavy = state.zoom === 'actual';
-  if (heavy) el('busy').hidden = false;
+  const interactive = state.retouching;
+  const quick = state.quick;
+  // Keep the last image visible while painting; a dimming overlay on every dab looks like a flash.
+  if (heavy && !interactive) el('busy').hidden = false;
   await beforeWork();
   const source = state.source;
   const started = performance.now();
@@ -624,16 +631,16 @@ async function run() {
         show(state.fullResult.data, state.source.width, state.source.height);
       }
     } else {
-      const image = state.quick && state.draft ? state.draft : state.preview;
+      const image = quick && !interactive && state.draft ? state.draft : state.preview;
       const scale = image === state.draft ? state.draftScale : state.previewScale;
       const data = await process(image.data, image.width, image.height, scale,
                                  `preview${state.previewToken}${image === state.draft ? '-draft' : ''}`);
       if (state.source !== source) return;
       show(data, image.width, image.height);
-      if (!state.quick && !state.cropping && batch.active) updateEditedThumbnail(batch.active, data, image.width, image.height);
+      if (!quick && !state.cropping && batch.active) updateEditedThumbnail(batch.active, data, image.width, image.height);
     }
     report(performance.now() - started);
-    renderLoupe();
+    if (!quick && !state.retouchGesture) renderLoupe();
     sizes();
   } catch (error) {
     report(0, error.message);
@@ -648,7 +655,8 @@ function report(ms, error) {
   const { width, height } = state.source || { width: 0, height: 0 };
   const size = `${width} × ${height}`;
   const shown = state.zoom === 'actual' ? `${Math.round(state.scale * 100)}%` : `${Math.round(state.previewScale * 100)}% preview`;
-  el('status').textContent = error ? error : `${size} · ${shown} · ${ms.toFixed(0)} ms`;
+  const text = error ? error : `${size} · ${shown}`;
+  if (el('status').textContent !== text) el('status').textContent = text;
 }
 
 // Panel -----------------------------------------------------------------
@@ -1392,17 +1400,22 @@ let sizeTicket = 0;
 function sizes(delay = 800, asked = false) {
   const out = el('sizes');
   clearTimeout(sizeTimer);
+  const ticket = ++sizeTicket;
   if (!state.source) { out.textContent = ''; return; }
   const original = state.fileSize ? `<span class="long">Original </span>${bytes(state.fileSize)}` : '';
   const known = state.encoded && state.encoded.key === encodeKey() ? state.encoded.blob.size : null;
   const huge = state.source.width * state.source.height > 40e6;
-  const saved = known !== null ? bytes(known) : huge && !asked ? '' : '…';
-  out.innerHTML = original + (saved ? `${original ? ' → ' : ''}<span class="long">saved </span><b>${saved}</b>` : '');
+  const estimate = known ?? state.encoded?.blob.size;
+  const saved = estimate !== undefined ? bytes(estimate) : '';
+  const html = original + (saved ? `${original ? ' → ' : ''}<span class="long">saved </span><b>${saved}</b>` : '');
+  if (out.innerHTML !== html) out.innerHTML = html;
+  out.setAttribute('aria-busy', String(known === null));
+  out.title = known === null ? 'Saved size is updating; any shown saved size is the previous estimate.'
+    : 'The file you opened, and the file Save will write with this format and quality';
   if (known !== null || (huge && !asked)) return;
-  const ticket = ++sizeTicket;
   sizeTimer = setTimeout(async () => {
     if (ticket !== sizeTicket || !state.source) return;
-    if (rendering || state.cropping) { sizes(400, asked); return; }
+    if (rendering || state.cropping || state.retouchGesture || state.quick) { sizes(400, asked); return; }
     try {
       await encodeFull();
       if (ticket === sizeTicket) sizes(800, asked);

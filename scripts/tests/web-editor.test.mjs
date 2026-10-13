@@ -98,7 +98,7 @@ try {
   before = await page.locator('#cropRect').boundingBox();
   await drag(before.x + before.width / 2, before.y + before.height / 2, -frame.width / 4, 0);
   after = await page.locator('#cropRect').boundingBox();
-  assert.ok(Math.abs(after.x - before.x + frame.width / 4) < 2, 'crop frame moves left');
+  assert.ok(Math.abs(after.x - before.x + frame.width / 4) < 2, `crop frame moves left: ${JSON.stringify({ before, after, frame })}`);
   before = after;
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowDown');

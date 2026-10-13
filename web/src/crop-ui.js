@@ -32,9 +32,11 @@ export function wireCrop({ state, el, showOriginal, restore, apply, redraw, upda
   }
   const place = () => {
     if (!state.cropping || !box) return;
-    const sx = overlay.clientWidth / image().width, sy = overlay.clientHeight / image().height;
-    Object.assign(rect.style, { display: 'block', left: `${box.x * sx}px`,
-      top: `${box.y * sy}px`, width: `${box.w * sx}px`, height: `${box.h * sy}px` });
+    // Follow the image in the same layout pass as zoom/Fit, before ResizeObserver runs.
+    // A stale pixel-sized rectangle can otherwise keep the fitted stage scrolled.
+    const sx = 100 / image().width, sy = 100 / image().height;
+    Object.assign(rect.style, { display: 'block', left: `${box.x * sx}%`,
+      top: `${box.y * sy}%`, width: `${box.w * sx}%`, height: `${box.h * sy}%` });
     const pixels = pixelCrop(box, image());
     el('cropSize').textContent = `${pixels.w} × ${pixels.h} px`;
     el('cropApply').disabled = box.w < 1 || box.h < 1;

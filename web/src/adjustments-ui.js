@@ -1,8 +1,9 @@
-import { COLOR_RANGES, copyAdjustments, freshAdjustments, sampleWhiteBalance } from './adjustments.js?v=%%V%%';
+import { COLOR_RANGES, freshAdjustments, sampleWhiteBalance } from './adjustments.js?v=%%V%%';
 
 export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redraw }) {
   const overlay = el('retouchOverlay'), ellipse = el('localEllipse'), cursor = el('brushCursor');
   let active = null, picking = false, space = false, gesture = null, previousSplit = null;
+  let cursorPoint = null;
   let history = [], future = [], baseline = '';
   let brush = { mode: 'dodge', size: 15, softness: 80, strength: 25 };
   let colorRange = 1;
@@ -61,7 +62,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     el('compare').classList.toggle('active', state.split);
     overlay.classList.toggle('sampling', picking);
     overlay.classList.toggle('hand', space);
-    cursor.hidden = true;
+    updateCursor();
     for (const [id, key] of [['localLight', 'local'], ['whiteBalance', 'wb'], ['selectiveColor', 'hsl']]) {
       el(id).classList.toggle('selected', state.selected === key);
       el(id).disabled = !state.source || !!state.cropping;
@@ -197,15 +198,17 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
   function endGesture(cancelled = false) {
     if (!gesture) return;
     const old = gesture; gesture = null;
+    state.retouchGesture = false;
     if (old.before) {
       if (cancelled) { state.adjustments = JSON.parse(old.before); changed(); refreshPanel(); }
-      else { commit(); refreshPanel(); }
+      else { commit(); sync(); }
     }
     if (overlay.hasPointerCapture(old.pointer)) overlay.releasePointerCapture(old.pointer);
     overlay.classList.remove('painting');
   }
   overlay.addEventListener('pointerdown', event => {
     if (gesture || !state.source) return;
+    cursorPoint = { x: event.clientX, y: event.clientY };
     if (event.button === 1 || (space && event.button === 0)) {
       gesture = { pointer: event.pointerId, pan: true, x: event.clientX, y: event.clientY, left: el('stage').scrollLeft, top: el('stage').scrollTop };
     } else if (event.button !== 0) return;
@@ -222,6 +225,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
       if (!layer || !layer.enabled) return;
       const p = point(event);
       gesture = { pointer: event.pointerId, before: snapshot(), start: p, layer, from: { ...layer }, handle: event.target.dataset.handle };
+      state.retouchGesture = true;
       if (layer.type === 'brush') {
         gesture.stroke = { mode: brush.mode, radius: brush.size / 200, softness: brush.softness, strength: brush.strength, points: [[p.x, p.y]] };
         layer.strokes.push(gesture.stroke); changed(true);
@@ -229,14 +233,18 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     }
     overlay.setPointerCapture(event.pointerId); overlay.classList.add('painting'); event.preventDefault(); event.stopPropagation();
   });
-  overlay.addEventListener('pointermove', event => {
+  function updateCursor() {
     const layer = selectedLayer();
-    if (!gesture && layer?.type === 'brush' && !space) {
+    cursor.hidden = overlay.hidden || state.selected !== 'local' || picking || layer?.type !== 'brush'
+      || !layer.enabled || space || gesture?.pan || !cursorPoint;
+    if (!cursor.hidden) {
       const r = overlay.getBoundingClientRect(), c = crop();
-      cursor.hidden = false;
       const diameter = brush.size / 100 * Math.min(state.original.width, state.original.height);
-      Object.assign(cursor.style, { left: `${event.clientX - r.left}px`, top: `${event.clientY - r.top}px`, width: `${diameter / c.w * r.width}px`, height: `${diameter / c.h * r.height}px` });
+      Object.assign(cursor.style, { left: `${cursorPoint.x - r.left}px`, top: `${cursorPoint.y - r.top}px`, width: `${diameter / c.w * r.width}px`, height: `${diameter / c.h * r.height}px` });
     }
+  }
+  overlay.addEventListener('pointermove', event => {
+    cursorPoint = { x: event.clientX, y: event.clientY }; updateCursor();
     if (!gesture || gesture.pointer !== event.pointerId) return;
     if (gesture.pan) {
       el('stage').scrollLeft = gesture.left + gesture.x - event.clientX; el('stage').scrollTop = gesture.top + gesture.y - event.clientY; return;
@@ -260,7 +268,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
   overlay.addEventListener('pointerup', () => endGesture());
   overlay.addEventListener('pointercancel', () => endGesture(true));
   overlay.addEventListener('lostpointercapture', () => endGesture(true));
-  overlay.addEventListener('pointerleave', () => { cursor.hidden = true; });
+  overlay.addEventListener('pointerleave', () => { cursorPoint = null; cursor.hidden = true; });
   overlay.addEventListener('dblclick', event => event.stopPropagation());
   overlay.addEventListener('wheel', event => { if (gesture) { event.preventDefault(); event.stopPropagation(); } }, { passive: false });
   // End a stroke before crop/open/reset alters the underlying document.
