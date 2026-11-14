@@ -46,6 +46,8 @@
           </select>
           <svg class="chevron" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4"/></svg>
         </div>
+        <button type="button" class="preset-button apply-batch-preset" id="applyBatchPreset" hidden>Apply preset to all</button>
+        <p class="preset-note" id="batchPresetMessage" role="status" hidden></p>
       </div>
       <div class="filter-scroll" id="filterScroll">
         <div class="retouch-tools" aria-label="Retouch tools">
@@ -58,7 +60,12 @@
         <div class="more" aria-hidden="true"><svg viewBox="0 0 12 7"><path d="M1 1l5 5 5-5"/></svg></div>
       </div>
       <div class="batch-images" id="batchImages" hidden>
-        <p class="preset-note" id="batchSummary"></p>
+        <div class="batch-images-head">
+          <p class="preset-note" id="batchSummary"></p>
+          <button type="button" class="gallery-icon" id="openBatchGrid" aria-label="Open image gallery" aria-haspopup="dialog" aria-controls="batchGridDialog" title="Open image gallery">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="2.5" width="6" height="6" rx="1"/><rect x="11.5" y="2.5" width="6" height="6" rx="1"/><rect x="2.5" y="11.5" width="6" height="6" rx="1"/><rect x="11.5" y="11.5" width="6" height="6" rx="1"/></svg>
+          </button>
+        </div>
         <div class="batch-gallery" id="batchGallery" role="group" aria-label="Images to edit"></div>
       </div>
       <div class="preset-foot">
@@ -136,6 +143,20 @@
     <div class="busy" id="busy" hidden><span></span></div>
   </section>
 </main>
+
+<dialog class="batch-grid-dialog" id="batchGridDialog" aria-labelledby="batchGridTitle">
+  <header class="batch-grid-head">
+    <h2 id="batchGridTitle"></h2>
+    <label class="thumbnail-size" for="batchGridSize">Thumbnail size
+      <input type="range" id="batchGridSize" min="96" max="360" step="8" value="192">
+    </label>
+    <button type="button" class="gallery-icon" id="closeBatchGrid" aria-label="Close image gallery" title="Close image gallery" autofocus>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>
+    </button>
+    <p class="batch-grid-message" id="batchGridMessage" role="status" hidden></p>
+  </header>
+  <div class="batch-grid" id="batchGrid" role="group" aria-label="Images to edit"></div>
+</dialog>
 
 <div class="crop-actions" id="cropActions" hidden>
   <label>Ratio <select id="cropRatio" aria-label="Crop aspect ratio">

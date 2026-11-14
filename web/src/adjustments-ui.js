@@ -327,7 +327,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
   window.addEventListener('blur', () => { endGesture(true); space = false; sync(); });
   window.addEventListener('keyup', event => { if (event.code === 'Space') { space = false; sync(); } });
   window.addEventListener('keydown', event => {
-    if (event.target.closest?.('input, select, textarea, [contenteditable]') || state.cropping) return;
+    if (event.target.closest?.('dialog, input, select, textarea, [contenteditable]') || state.cropping) return;
     if (!['local', 'wb', 'hsl'].includes(state.selected)) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey); }
     else if (event.key === 'Escape' && (gesture || picking || state.selected === 'local')) {

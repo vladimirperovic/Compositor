@@ -633,11 +633,15 @@ async function run() {
     } else {
       const image = quick && !interactive && state.draft ? state.draft : state.preview;
       const scale = image === state.draft ? state.draftScale : state.previewScale;
+      const entry = batch.active;
+      const key = entry?.lastKey;
       const data = await process(image.data, image.width, image.height, scale,
                                  `preview${state.previewToken}${image === state.draft ? '-draft' : ''}`);
       if (state.source !== source) return;
       show(data, image.width, image.height);
-      if (!quick && !state.cropping && batch.active) updateEditedThumbnail(batch.active, data, image.width, image.height);
+      if (!quick && !state.cropping && entry && batch.active === entry && entry.lastKey === key) {
+        updateEditedThumbnail(entry, data, image.width, image.height);
+      }
     }
     report(performance.now() - started);
     if (!quick && !state.retouchGesture) renderLoupe();
@@ -811,6 +815,15 @@ function presetOptions(selected = '') {
     select.append(group);
   }
   select.value = selected;
+  updateBatchControls();
+}
+
+function applySavedLook(target, preset) {
+  target.settings = copySettings(preset.settings);
+  target.adjustments = { ...copyAdjustments(preset.adjustments, false), layers: target.adjustments.layers };
+  target.seed = preset.seed;
+  const first = ORDER.find(kind => !isNeutral(kind, target.settings[kind]));
+  if (first !== undefined) target.selected = first;
 }
 
 function buildPresets() {
@@ -820,16 +833,16 @@ function buildPresets() {
   select.addEventListener('change', () => {
     const saved = savedPresets.find(item => item.id === select.value);
     if (saved) {
-      state.settings = copySettings(saved.settings);
-      state.adjustments = { ...copyAdjustments(saved.adjustments, false), layers: state.adjustments.layers };
-      state.seed = saved.seed;
+      adjustmentsUI?.cancel();
+      applySavedLook(state, saved);
     } else {
       const preset = PRESETS.find(item => item.id === select.value);
       state.settings = preset ? settingsFor(preset) : freshSettings();
+      const first = ORDER.find(kind => !isNeutral(kind, state.settings[kind]));
+      if (first !== undefined) state.selected = first;
     }
     el('presetMessage').hidden = true;
-    const first = ORDER.find(kind => !isNeutral(kind, state.settings[kind]));
-    if (first !== undefined) state.selected = first;
+    el('batchPresetMessage').hidden = true;
     refreshPanel();
     adjustmentsUI?.load();
     schedule();
@@ -1030,6 +1043,7 @@ const batch = { entries: [], active: null, loading: null, controller: null, url:
 const entryKey = entry => JSON.stringify([entry.settings, entry.seed, entry.crop, entry.adjustments]);
 
 function captureBatchSettings() {
+  updateBatchControls();
   const entry = batch.active;
   if (!entry) return;
   entry.settings = copySettings(state.settings);
@@ -1037,6 +1051,10 @@ function captureBatchSettings() {
   entry.seed = state.seed;
   entry.selected = state.selected;
   entry.preset = el('presets').value;
+  markBatchEdit(entry);
+}
+
+function markBatchEdit(entry) {
   const current = entryKey(entry);
   if (entry.lastKey !== current) {
     entry.lastKey = current;
@@ -1044,17 +1062,19 @@ function captureBatchSettings() {
     clearBatchDownload();
     if (!batch.controller) el('batchStatus').textContent = '';
   }
-  entry.button.classList.toggle('edited', current !== entry.initialKey);
+  for (const button of entry.buttons) button.classList.toggle('edited', current !== entry.initialKey);
 }
 
 function refreshBatchSelection() {
   updateBatchControls();
   for (const entry of batch.entries) {
-    entry.button.classList.toggle('selected', entry === batch.active);
-    entry.button.classList.toggle('loading', entry === batch.loading);
-    entry.button.setAttribute('aria-pressed', String(entry === batch.active));
+    for (const button of entry.buttons) {
+      button.classList.toggle('selected', entry === batch.active);
+      button.classList.toggle('loading', entry === batch.loading);
+      button.setAttribute('aria-pressed', String(entry === batch.active));
+    }
   }
-  const button = (batch.loading || batch.active)?.button;
+  const button = (batch.loading || batch.active)?.buttons[0];
   if (button) {
     const gallery = el('batchGallery');
     const bounds = gallery.getBoundingClientRect();
@@ -1064,11 +1084,22 @@ function refreshBatchSelection() {
   }
 }
 
-async function thumbnailBlob(bitmap) {
-  const scale = Math.min(1, 160 / bitmap.width, 120 / bitmap.height);
-  const small = scratchCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
+async function thumbnailBlob(bitmap, entry) {
+  const crop = entry?.crop || { x: 0, y: 0, w: bitmap.width, h: bitmap.height };
+  const scale = Math.min(1, 480 / crop.w, 360 / crop.h);
+  const small = scratchCanvas(Math.max(1, Math.round(crop.w * scale)), Math.max(1, Math.round(crop.h * scale)));
   try {
-    small.getContext('2d').drawImage(bitmap, 0, 0, small.width, small.height);
+    const paint = small.getContext('2d', { willReadFrequently: !!entry });
+    paint.imageSmoothingQuality = 'high';
+    paint.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h, 0, 0, small.width, small.height);
+    if (entry) {
+      const { width, height, data } = paint.getImageData(0, 0, small.width, small.height);
+      const pixels = await process(data, width, height, scale, null, undefined, {
+        stack: activeStack(scale, entry.settings, entry.seed), adjustments: entry.adjustments,
+        geometry: { originalWidth: bitmap.width, originalHeight: bitmap.height, crop }, opaque: isOpaque(data),
+      });
+      paint.putImageData(new ImageData(pixels, width, height), 0, 0);
+    }
     return await toBlob(small, 'image/png');
   } finally {
     small.width = 1;
@@ -1080,21 +1111,26 @@ function setThumbnail(entry, blob, revision) {
   if (!batch.entries.includes(entry) || entry.thumbnailRevision !== revision) return;
   if (entry.thumbnail) URL.revokeObjectURL(entry.thumbnail);
   entry.thumbnail = URL.createObjectURL(blob);
-  entry.button.querySelector('img').src = entry.thumbnail;
+  for (const button of entry.buttons) button.querySelector('img').src = entry.thumbnail;
 }
 
 async function loadThumbnails(entries) {
-  for (const entry of entries) {
-    if (!batch.entries.includes(entry)) return;
-    const revision = entry.thumbnailRevision;
+  const jobs = entries.map(entry => ({ entry, revision: ++entry.thumbnailRevision, key: entry.lastKey }));
+  for (const { entry, revision, key } of jobs) {
+    if (!batch.entries.includes(entry) || entry.thumbnailRevision !== revision || entry.lastKey !== key) continue;
     let bitmap;
     try {
       bitmap = await createImageBitmap(entry.file, { imageOrientation: 'from-image' });
-      const blob = await thumbnailBlob(bitmap);
-      setThumbnail(entry, blob, revision);
+      if (entry.thumbnailRevision !== revision || entry.lastKey !== key || !batch.entries.includes(entry)) continue;
+      const blob = await thumbnailBlob(bitmap, entry);
+      if (entry.lastKey === key) setThumbnail(entry, blob, revision);
     } catch {
-      entry.button.classList.add('failed');
-      entry.button.title = `${entry.file.name} — preview unavailable`;
+      if (!entry.thumbnail && entry.thumbnailRevision === revision) {
+        for (const button of entry.buttons) {
+          button.classList.add('failed');
+          button.title = `${entry.file.name} — preview unavailable`;
+        }
+      }
     } finally {
       bitmap?.close();
     }
@@ -1103,10 +1139,12 @@ async function loadThumbnails(entries) {
 
 async function updateEditedThumbnail(entry, pixels, width, height) {
   const revision = ++entry.thumbnailRevision;
+  const key = entry.lastKey;
   let bitmap;
   try {
     bitmap = await createImageBitmap(new ImageData(pixels, width, height));
-    setThumbnail(entry, await thumbnailBlob(bitmap), revision);
+    const blob = await thumbnailBlob(bitmap);
+    if (entry.lastKey === key) setThumbnail(entry, blob, revision);
   } catch { /* The initial thumbnail remains if this preview cannot be made. */ }
   finally { bitmap?.close(); }
 }
@@ -1117,25 +1155,26 @@ async function selectBatchImage(entry) {
     if (batch.loading) {
       openTicket += 1;
       batch.loading = null;
-      updateBatchControls();
       refreshBatchSelection();
     }
     return;
   }
   batch.loading = entry;
-  el('saveAll').disabled = true;
+  el('batchGridMessage').hidden = true;
   refreshBatchSelection();
   try {
     await read(entry.file, entry);
   } catch {
     if (batch.loading === entry && batch.entries.includes(entry)) {
-      el('batchStatus').textContent = `${entry.file.name} could not be opened.`;
-      entry.button.classList.add('failed');
+      const message = `${entry.file.name} could not be opened.`;
+      el('batchStatus').textContent = message;
+      el('batchGridMessage').textContent = message;
+      el('batchGridMessage').hidden = false;
+      for (const button of entry.buttons) button.classList.add('failed');
     }
   } finally {
     if (batch.loading === entry) {
       batch.loading = null;
-      updateBatchControls();
       refreshBatchSelection();
     }
   }
@@ -1210,22 +1249,14 @@ function chooseBatch(files) {
   for (const entry of added) {
     entry.initialKey = entryKey(entry);
     entry.lastKey = entry.initialKey;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'batch-thumb';
-    button.title = entry.file.name;
-    button.setAttribute('aria-label', `Edit ${batch.entries.indexOf(entry) + 1}: ${entry.file.name}`);
-    button.setAttribute('aria-pressed', 'false');
-    const thumbnail = document.createElement('img');
-    thumbnail.alt = '';
-    const name = document.createElement('span');
-    name.textContent = entry.file.name;
-    button.append(thumbnail, name);
-    button.addEventListener('click', () => selectBatchImage(entry));
-    entry.button = button;
-    el('batchGallery').append(button);
+    const index = batch.entries.indexOf(entry) + 1;
+    entry.buttons = [makeBatchThumb(entry, index, false), makeBatchThumb(entry, index, true)];
+    el('batchGallery').append(entry.buttons[0]);
+    el('batchGrid').append(entry.buttons[1]);
   }
-  el('batchSummary').textContent = `${batch.entries.length} image${batch.entries.length === 1 ? '' : 's'} · individual edits`;
+  const count = `${batch.entries.length} image${batch.entries.length === 1 ? '' : 's'}`;
+  el('batchSummary').textContent = `${count} · individual edits`;
+  el('batchGridTitle').textContent = count;
   el('batchPanel').hidden = false;
   el('batchImages').hidden = false;
   el('batchStatus').textContent = '';
@@ -1248,8 +1279,55 @@ function chooseBatch(files) {
   })();
 }
 
+function makeBatchThumb(entry, index, inGrid) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `image-thumb ${inGrid ? 'batch-grid-thumb' : 'batch-thumb'}`;
+  button.title = entry.file.name;
+  button.setAttribute('aria-label', `Edit ${index}: ${entry.file.name}`);
+  button.setAttribute('aria-pressed', 'false');
+  const thumbnail = document.createElement('img');
+  thumbnail.alt = '';
+  const name = document.createElement('span');
+  name.textContent = entry.file.name;
+  button.append(thumbnail, name);
+  button.addEventListener('click', async () => {
+    await selectBatchImage(entry);
+    if (inGrid && batch.active === entry) el('batchGridDialog').close();
+  });
+  return button;
+}
+
+function selectedSavedPreset() {
+  return savedPresets.find(preset => preset.id === el('presets').value);
+}
+
 function updateBatchControls() {
   el('saveAll').disabled = state.cropping || !!batch.controller || !!batch.loading || !batch.entries.length;
+  const apply = el('applyBatchPreset');
+  apply.hidden = batch.entries.length < 2 || !selectedSavedPreset();
+  apply.disabled = state.cropping || !!batch.loading || !batch.active;
+  if (apply.hidden) el('batchPresetMessage').hidden = true;
+}
+
+function applyPresetToBatch() {
+  const preset = selectedSavedPreset();
+  if (!preset || el('applyBatchPreset').disabled || batch.entries.length < 2) return;
+  adjustmentsUI?.cancel();
+  for (const entry of batch.entries) {
+    if (entry === batch.active) continue;
+    applySavedLook(entry, preset);
+    entry.preset = preset.id;
+    markBatchEdit(entry);
+  }
+  applySavedLook(state, preset);
+  adjustmentsUI?.load();
+  refreshPanel();
+  schedule();
+  loadThumbnails(batch.entries);
+  const message = el('batchPresetMessage');
+  message.textContent = `“${preset.name}” applied to ${batch.entries.length} images.`;
+  message.hidden = false;
 }
 
 async function saveAll() {
@@ -1338,6 +1416,19 @@ async function saveAll() {
 }
 
 function wireBatch() {
+  const dialog = el('batchGridDialog');
+  el('openBatchGrid').addEventListener('click', () => {
+    el('batchGridMessage').hidden = true;
+    dialog.showModal();
+    batch.active?.buttons[1].scrollIntoView({ block: 'nearest' });
+  });
+  el('closeBatchGrid').addEventListener('click', () => dialog.close());
+  // The dialog handles its own keyboard navigation and native Escape dismissal.
+  dialog.addEventListener('keydown', event => event.stopPropagation());
+  el('batchGridSize').addEventListener('input', event => {
+    dialog.style.setProperty('--thumbnail-size', `${event.target.value}px`);
+  });
+  el('applyBatchPreset').addEventListener('click', applyPresetToBatch);
   el('openMultiple').addEventListener('click', () => el('multipleFiles').click());
   el('multipleFiles').addEventListener('change', event => {
     importFiles(event.target.files);
@@ -1358,8 +1449,11 @@ function wireBatch() {
     batch.revision += 1;
     clearBatchDownload();
     el('batchGallery').replaceChildren();
+    el('batchGrid').replaceChildren();
+    if (dialog.open) dialog.close();
     el('batchPanel').hidden = true;
     el('batchImages').hidden = true;
+    updateBatchControls();
     scrollHints();
   });
 }
