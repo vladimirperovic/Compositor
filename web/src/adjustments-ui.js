@@ -1,4 +1,7 @@
-import { COLOR_RANGES, freshAdjustments, sampleWhiteBalance } from './adjustments.js?v=%%V%%';
+import { COLOR_RANGES, TONE_CHANNELS, freshAdjustments, sampleWhiteBalance } from './adjustments.js?v=%%V%%';
+import { curveEditor, drawHistogram } from './tone-ui.js?v=%%V%%';
+
+const TOOLS = [['localLight', 'local'], ['levels', 'levels'], ['curves', 'curves'], ['whiteBalance', 'wb'], ['selectiveColor', 'hsl']];
 
 export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redraw }) {
   const overlay = el('retouchOverlay'), ellipse = el('localEllipse'), cursor = el('brushCursor');
@@ -7,6 +10,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
   let history = [], future = [], baseline = '';
   let brush = { mode: 'dodge', size: 15, softness: 80, strength: 25 };
   let colorRange = 1;
+  const toneChannel = { levels: 0, curves: 0 };
   const blends = [['soft-light', 'Soft Light'], ['overlay', 'Overlay'], ['normal', 'Normal']];
   const snapshot = () => JSON.stringify(state.adjustments);
   const selectedLayer = () => state.adjustments.layers.find(layer => layer.id === active);
@@ -35,6 +39,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     if (!from.length) return;
     to.push(snapshot()); state.adjustments = JSON.parse(from.pop()); baseline = snapshot();
     if (!selectedLayer()) active = state.adjustments.layers.at(-1)?.id;
+    el('presets').value = '';
     refreshPanel(); schedule();
   }
   function load() {
@@ -47,7 +52,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     if (state.cropping) el('cropCancel').click();
     state.selected = key; refreshPanel();
   }
-  for (const [id, key] of [['localLight', 'local'], ['whiteBalance', 'wb'], ['selectiveColor', 'hsl']]) {
+  for (const [id, key] of TOOLS) {
     el(id).addEventListener('click', () => select(key));
   }
   function sync() {
@@ -64,15 +69,14 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     overlay.classList.toggle('sampling', picking);
     overlay.classList.toggle('hand', space);
     updateCursor();
-    for (const [id, key] of [['localLight', 'local'], ['whiteBalance', 'wb'], ['selectiveColor', 'hsl']]) {
+    for (const [id, key] of TOOLS) {
       el(id).classList.toggle('selected', state.selected === key);
       el(id).disabled = !state.source || !!state.cropping;
     }
     const layer = selectedLayer(), c = crop();
-    const wbCheck = el('controls').querySelector('input[aria-label="Enable white balance"]');
-    const colorCheck = el('controls').querySelector('input[aria-label="Enable individual colors"]');
-    if (wbCheck) wbCheck.checked = state.adjustments.whiteBalance.enabled;
-    if (colorCheck) colorCheck.checked = state.adjustments.colors.enabled;
+    for (const check of el('controls').querySelectorAll('[data-adjustment-toggle]')) {
+      check.checked = state.adjustments[check.dataset.adjustmentToggle].enabled;
+    }
     ellipse.hidden = !local || layer?.type !== 'ellipse';
     if (!ellipse.hidden) {
       const ow = state.original.width, oh = state.original.height;
@@ -106,15 +110,16 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
   }
   function note(box, text) { const p = document.createElement('p'); p.className = 'summary'; p.textContent = text; box.append(p); }
   function row(box, ...items) { const r = document.createElement('div'); r.className = 'retouch-row'; r.append(...items); box.append(r); return r; }
-  function range(box, label, object, field, min, max, onInput = () => changed(true), onChange = commit) {
+  function range(box, label, object, field, min, max, onInput = () => changed(true), onChange = commit, step = 1) {
     const wrap = document.createElement('label'); wrap.className = 'control';
     const head = document.createElement('span'); head.className = 'control-head';
     const name = document.createElement('b'); name.textContent = label;
     const output = document.createElement('output'); output.textContent = object[field];
     const input = document.createElement('input'); input.type = 'range'; input.min = min; input.max = max;
-    input.step = 1; input.value = object[field]; input.setAttribute('aria-label', label);
+    input.step = step; input.value = object[field]; input.setAttribute('aria-label', label);
     input.addEventListener('input', () => { object[field] = Number(input.value); output.textContent = input.value; onInput(); });
     input.addEventListener('change', onChange); head.append(name, output); wrap.append(head, input); box.append(wrap);
+    return input;
   }
   function choice(box, label, items, value, change) {
     const wrap = document.createElement('label'); wrap.className = 'control'; wrap.textContent = label;
@@ -122,9 +127,10 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     for (const [v, name] of items) select.append(new Option(name, v)); select.value = value;
     select.addEventListener('change', () => change(select.value)); wrap.append(select); box.append(wrap); return select;
   }
-  function toggle(box, label, object) {
+  function toggle(box, label, object, key) {
     const wrap = document.createElement('label'); wrap.className = 'retouch-toggle';
     const check = document.createElement('input'); check.type = 'checkbox'; check.checked = object.enabled;
+    if (key) check.dataset.adjustmentToggle = key;
     check.setAttribute('aria-label', label); check.addEventListener('change', () => { object.enabled = check.checked; commit(); });
     wrap.append(check, document.createTextNode(label)); box.append(wrap);
   }
@@ -150,6 +156,46 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     copy.id = crypto.randomUUID(); copy.name = uniqueName(`${layer.name} copy`);
     layers.splice(layers.indexOf(layer) + 1, 0, copy); active = copy.id;
     commit(); refreshPanel();
+  }
+  function renderTone(box, key) {
+    const adjustment = state.adjustments[key];
+    const channel = toneChannel[key];
+    const label = key === 'levels' ? 'Levels' : 'Curves';
+    const update = () => { adjustment.enabled = true; changed(true); };
+    toggle(box, `Enable ${label.toLowerCase()}`, adjustment, key);
+    choice(box, `${label} channel`, TONE_CHANNELS, channel, value => {
+      toneChannel[key] = Number(value);
+      refreshPanel();
+      el('controls').querySelector(`select[aria-label="${label} channel"]`).focus();
+    });
+    const preview = state.preview;
+    if (key === 'levels') {
+      const histogram = document.createElement('canvas');
+      histogram.className = 'tone-histogram';
+      histogram.width = 512; histogram.height = 160;
+      histogram.setAttribute('role', 'img'); histogram.setAttribute('aria-label', 'Input histogram');
+      drawHistogram(histogram.getContext('2d'), preview, channel);
+      box.append(histogram);
+      const levels = adjustment.channels[channel];
+      const black = range(box, 'Input black', levels, 'black', 0, levels.white - 1, () => {
+        white.min = levels.black + 1;
+        update();
+      });
+      range(box, 'Midtone gamma', levels, 'gamma', .1, 9.99, update, commit, .01);
+      const white = range(box, 'Input white', levels, 'white', levels.black + 1, 255, () => {
+        black.max = levels.white - 1;
+        update();
+      });
+      range(box, 'Output black', levels, 'outputBlack', 0, 255, update);
+      range(box, 'Output white', levels, 'outputWhite', 0, 255, update);
+    } else {
+      curveEditor(box, adjustment.channels[channel], preview, channel, update, commit, { button, row });
+    }
+    row(box, button('Reset channel', () => {
+      adjustment.channels[channel] = freshAdjustments()[key].channels[channel];
+      commit();
+      refreshPanel();
+    }));
   }
   function render(box, key) {
     box.classList.remove('disabled');
@@ -215,10 +261,12 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
           note(properties, 'Paint on the image. X swaps white / black; Space + drag pans. Each stroke can be undone.');
         }
       } else note(box, 'Add an oval or a brush layer to begin. Up to 16 independent layers.');
+    } else if (key === 'levels' || key === 'curves') {
+      renderTone(box, key);
     } else if (key === 'wb') {
       const w = state.adjustments.whiteBalance;
       note(box, 'Pick a surface that should be neutral grey or white. The pipette averages nearby original pixels; manual controls refine the result.');
-      toggle(box, 'Enable white balance', w);
+      toggle(box, 'Enable white balance', w, 'whiteBalance');
       row(box, button(picking ? 'Cancel pipette' : 'Pick neutral point', () => { picking = !picking; refreshPanel(); }, 'pickWhite'),
         button('Reset white balance', () => { state.adjustments.whiteBalance = freshAdjustments().whiteBalance; picking = false; commit(); refreshPanel(); }));
       range(box, 'WB strength', w, 'strength', 0, 100);
@@ -229,7 +277,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
     } else {
       const colors = state.adjustments.colors;
       note(box, 'Adjust a color range throughout the image, with smooth transitions into neighbouring colors.');
-      toggle(box, 'Enable individual colors', colors);
+      toggle(box, 'Enable individual colors', colors, 'colors');
       choice(box, 'Color range', COLOR_RANGES.map(([name], i) => [i, name]), colorRange, value => { colorRange = Number(value); refreshPanel(); });
       const rangeSettings = colors.ranges[colorRange];
       const update = () => { colors.enabled = true; changed(true); };
@@ -328,7 +376,7 @@ export function wireAdjustments({ state, el, schedule, refreshPanel, paint, redr
   window.addEventListener('keyup', event => { if (event.code === 'Space') { space = false; sync(); } });
   window.addEventListener('keydown', event => {
     if (event.target.closest?.('dialog, input, select, textarea, [contenteditable]') || state.cropping) return;
-    if (!['local', 'wb', 'hsl'].includes(state.selected)) return;
+    if (!TOOLS.some(([, key]) => key === state.selected)) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey); }
     else if (event.key === 'Escape' && (gesture || picking || state.selected === 'local')) {
       event.preventDefault(); endGesture(true); picking = false; state.selected = 0; refreshPanel();

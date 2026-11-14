@@ -5,13 +5,35 @@ export const COLOR_RANGES = [
 ];
 const clamp = (x, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, x));
 const number = (x, fallback, lo, hi) => Number.isFinite(x) ? clamp(x, lo, hi) : fallback;
+export const TONE_CHANNELS = [[0, 'RGB'], [1, 'Red'], [2, 'Green'], [3, 'Blue']];
+const identityLevels = () => ({ black: 0, gamma: 1, white: 255, outputBlack: 0, outputWhite: 255 });
+const identityCurve = () => [[0, 0], [255, 255]];
+export const MAX_CURVE_POINTS = 32;
 export const freshAdjustments = () => ({
+  levels: { enabled: false, channels: TONE_CHANNELS.map(identityLevels) },
+  curves: { enabled: false, channels: TONE_CHANNELS.map(identityCurve) },
   whiteBalance: { enabled: false, gains: [1, 1, 1], temperature: 0, tint: 0, strength: 100 },
   colors: { enabled: false, ranges: COLOR_RANGES.map(() => ({ hue: 0, saturation: 0, lightness: 0 })) },
   layers: [],
 });
 export function copyAdjustments(value, includeLayers = true) {
   const result = freshAdjustments();
+  result.levels.enabled = value?.levels?.enabled === true;
+  result.levels.channels = TONE_CHANNELS.map(([channel]) => {
+    const saved = value?.levels?.channels?.[channel];
+    const black = number(saved?.black, 0, 0, 254);
+    return { black, gamma: number(saved?.gamma, 1, .1, 9.99), white: number(saved?.white, 255, black + 1, 255),
+      outputBlack: number(saved?.outputBlack, 0, 0, 255), outputWhite: number(saved?.outputWhite, 255, 0, 255) };
+  });
+  result.curves.enabled = value?.curves?.enabled === true;
+  result.curves.channels = TONE_CHANNELS.map(([channel]) => {
+    const points = value?.curves?.channels?.[channel];
+    if (!Array.isArray(points) || points.length < 2 || points.length > MAX_CURVE_POINTS ||
+        points[0]?.[0] !== 0 || points.at(-1)?.[0] !== 255 ||
+        points.some((p, i) => !Array.isArray(p) || !Number.isInteger(p[0]) || !Number.isInteger(p[1]) ||
+          p[1] < 0 || p[1] > 255 || (i > 0 && !(p[0] > points[i - 1]?.[0])))) return identityCurve();
+    return points.map(([x, y]) => [x, y]);
+  });
   const wb = value?.whiteBalance;
   if (wb) {
     result.whiteBalance = {
@@ -27,7 +49,7 @@ export function copyAdjustments(value, includeLayers = true) {
     saturation: number(value?.colors?.ranges?.[i]?.saturation, 0, -100, 100),
     lightness: number(value?.colors?.ranges?.[i]?.lightness, 0, -100, 100),
   }));
-  // Layers only come from this editor's in-memory document; reusable looks contain colors, not masks.
+  // Reusable looks carry global adjustments. Mask coordinates belong to the image.
   if (includeLayers && Array.isArray(value?.layers)) result.layers = structuredClone(value.layers);
   return result;
 }
@@ -47,13 +69,64 @@ export function sampleWhiteBalance(image, x, y) {
   const grey = rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
   return rgb.map(v => clamp(grey / v, .25, 4));
 }
+const hasLevels = levels => levels?.enabled && levels.channels.some(p =>
+  p.black || p.gamma !== 1 || p.white !== 255 || p.outputBlack || p.outputWhite !== 255);
+const hasCurves = curves => curves?.enabled && curves.channels.some(points => points.some(([x, y]) => x !== y));
+
 export function hasColors(a) {
+  return hasLevels(a.levels) || hasCurves(a.curves) || hasColorCorrection(a);
+}
+
+function hasColorCorrection(a) {
   const w = a.whiteBalance;
   return (w.enabled && w.strength > 0 && (w.temperature || w.tint || w.gains.some(v => v !== 1)))
     || (a.colors.enabled && a.colors.ranges.some(v => v.hue || v.saturation || v.lightness));
 }
 export function applyColors(data, a) {
-  if (!hasColors(a)) return data;
+  if (hasColorCorrection(a)) applyColorCorrection(data, a);
+  const levels = hasLevels(a.levels) ? a.levels.channels : null;
+  const curves = hasCurves(a.curves) ? a.curves.channels.map(curveMapping) : null;
+  if (!levels && !curves) return data;
+  const tables = [1, 2, 3].map(channel => {
+    const table = new Uint8ClampedArray(256);
+    for (let i = 0; i < 256; i++) {
+      const value = levels ? levelValue(levelValue(i, levels[channel]), levels[0]) : i;
+      table[i] = curves ? curves[0](curves[channel](value)) : value;
+    }
+    return table;
+  });
+  for (let p = 0; p < data.length; p += 4) {
+    if (!data[p + 3]) continue;
+    data[p] = tables[0][data[p]];
+    data[p + 1] = tables[1][data[p + 1]];
+    data[p + 2] = tables[2][data[p + 2]];
+  }
+  return data;
+}
+
+function levelValue(value, levels) {
+  const input = clamp((value - levels.black) / (levels.white - levels.black));
+  return levels.outputBlack + Math.pow(input, 1 / levels.gamma) * (levels.outputWhite - levels.outputBlack);
+}
+
+// Shape-preserving cubic interpolation, matching the desktop curve between control points.
+export function curveMapping(points) {
+  const secants = points.slice(1).map(([x, y], i) => (y - points[i][1]) / (x - points[i][0]));
+  const slopes = [secants[0], ...secants.slice(1).map((right, i) => {
+    const left = secants[i];
+    return left * right <= 0 ? 0 : 2 / (1 / left + 1 / right);
+  }), secants.at(-1)];
+  return value => {
+    const i = Math.max(0, Math.min(points.length - 2, points.findLastIndex(([x]) => x <= value)));
+    const [x, y] = points[i], [nextX, nextY] = points[i + 1];
+    const width = nextX - x;
+    const t = clamp((value - x) / width), t2 = t * t, t3 = t2 * t;
+    return clamp((2 * t3 - 3 * t2 + 1) * y + (t3 - 2 * t2 + t) * width * slopes[i]
+      + (-2 * t3 + 3 * t2) * nextY + (t3 - t2) * width * slopes[i + 1], 0, 255);
+  };
+}
+
+function applyColorCorrection(data, a) {
   const w = a.whiteBalance;
   const mix = w.enabled ? w.strength / 100 : 0;
   const gains = w.gains.map((g, i) => 1 + mix * (g * Math.pow(2,
@@ -84,7 +157,6 @@ export function applyColors(data, a) {
     }
     data[p] = r * 255; data[p + 1] = g * 255; data[p + 2] = b * 255;
   }
-  return data;
 }
 
 // W3C compositing-1: Soft Light and Overlay, with 50% grey exactly neutral.

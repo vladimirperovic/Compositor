@@ -69,6 +69,42 @@ try {
   await gridFirst.click();
   await page.waitForFunction(() => !document.getElementById('batchGridDialog').open);
   assert.equal(await page.locator('.batch-thumb.selected').textContent(), 'first.png');
+  assert.deepEqual(await page.locator('.retouch-tools button').allTextContents(),
+    ['Local light · layers', 'Levels', 'Curves', 'White balance · pipette', 'Individual colors']);
+  await page.locator('#compare').click();
+  const waitForPixel = expected => page.waitForFunction(expected => {
+    const canvas = document.getElementById('canvas');
+    return canvas.getContext('2d').getImageData(40, 40, 1, 1).data.every((value, i) => value === expected[i]);
+  }, expected, { timeout: 5000 });
+  await page.locator('#levels').click();
+  await page.getByRole('slider', { name: 'Output white' }).evaluate(input => {
+    input.value = 128;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await waitForPixel([111, 26, 17, 255]);
+  await page.locator('#curves').click();
+  await page.getByLabel('Curves channel').selectOption('1');
+  await page.getByRole('button', { name: 'Add point' }).click();
+  await page.getByLabel('Curve input', { exact: true }).fill('111');
+  await page.getByLabel('Curve input', { exact: true }).press('Tab');
+  await page.getByLabel('Curve output', { exact: true }).fill('160');
+  await page.getByLabel('Curve output', { exact: true }).press('Tab');
+  await waitForPixel([160, 26, 17, 255]);
+  await page.locator('#retouchUndo').click();
+  await waitForPixel([128, 26, 17, 255]);
+  await page.locator('#retouchRedo').click();
+  await waitForPixel([160, 26, 17, 255]);
+  await page.getByLabel('Curve point', { exact: true }).selectOption('1');
+  await page.getByRole('button', { name: 'Remove point' }).click();
+  await waitForPixel([111, 26, 17, 255]);
+  const graph = page.getByRole('img', { name: 'Tone curve' });
+  const graphPoint = (x, y, width) => ({ x: (16 + x / 255 * 480) * width / 512, y: (16 + (255 - y) / 255 * 480) * width / 512 });
+  await graph.click({ position: graphPoint(111, 170, (await graph.boundingBox()).width) });
+  assert.equal(await page.getByLabel('Curve point', { exact: true }).locator('option').count(), 3);
+  await page.locator('#reset').click();
+  await waitForPixel([221, 51, 34, 255]);
+  await page.locator('#compare').click();
   await page.locator('#cropMode').click();
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#cropOverlay').isVisible(), false, 'Escape cancels the crop');
@@ -236,7 +272,7 @@ try {
     await page.screenshot({ path: process.env.DARKROOM_SCREENSHOT });
   }
   assert.deepEqual(errors, []);
-  console.log('PASS: multi-file import, per-image crops, original recovery, ratios, crop movement, wheel zoom, Space-drag pan, keyboard, actual PNG/ZIP output and mobile controls.');
+  console.log('PASS: multi-file import, gallery, Levels and Curves, per-image crops, zoom, pan, keyboard, actual PNG/ZIP output and mobile controls.');
 } finally {
   await browser.close();
 }

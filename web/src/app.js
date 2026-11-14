@@ -283,7 +283,7 @@ async function process(data, width, height, scale, keep = null,
   checkCancelled(options.signal);
   let current = data;
   if (hasColors(adjustments)) current = await adjustmentStage(current, width, height, 'colors', adjustments, geometry, place, options.signal);
-  const colorKey = JSON.stringify([adjustments.whiteBalance, adjustments.colors]);
+  const colorKey = keep ? JSON.stringify([adjustments.whiteBalance, adjustments.colors, adjustments.levels, adjustments.curves]) : '';
   current = await processFilters(current, width, height, scale, keep ? `${keep}|${colorKey}` : null, place, fixed);
   if (adjustments.layers.some(layer => layer.enabled && layer.opacity)) {
     current = await adjustmentStage(current, width, height, 'local', adjustments, geometry, place, options.signal);
@@ -858,7 +858,7 @@ function buildPresets() {
     name.setCustomValidity('');
     const existing = matchingPreset(savedPresets, name.value);
     el('confirmPreset').textContent = existing ? 'Replace' : 'Save';
-    el('presetHint').textContent = existing ? `Replace “${existing.name}” with these color and filter settings.` : 'Color and filter settings, saved in this browser. Local light layers stay with their image.';
+    el('presetHint').textContent = existing ? `Replace “${existing.name}” with these tone, color and filter settings.` : 'Tone, color and filter settings, saved in this browser. Local light layers stay with their image.';
   };
   const close = () => {
     form.hidden = true;
@@ -993,7 +993,8 @@ function adopt(source) {
     takeWindow = false;
     enterEditing();
   }
-  adjustmentsUI?.sync();
+  if (state.selected === 'levels' || state.selected === 'curves') refreshPanel();
+  else adjustmentsUI?.sync();
 }
 
 function cropTo(rect) {
