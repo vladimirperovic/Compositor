@@ -1,5 +1,11 @@
 # Compositor with Darkroom and Enlarger
 
+> **Status (2026-11-23):** web Darkroom development moved to
+> [vladimirperovic/darkroom](https://github.com/vladimirperovic/darkroom) — a standalone extraction
+> (C engine + wasm glue + web editor + build scripts, MIT attribution kept). This fork is frozen for
+> web development; it stays as the macOS app, the history, and the engine reference. The site's
+> `darkroom/` folder is now published from the darkroom repo.
+
 This fork is [Compositor](https://github.com/robbietilton/Compositor) plus two features of our own: **Darkroom**, a
 finishing workspace for renders, and **Enlarger**, AI upscaling with Real-ESRGAN (see [docs/darkroom.md](docs/darkroom.md)).
 
